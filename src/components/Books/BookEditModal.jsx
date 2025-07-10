@@ -15,18 +15,25 @@ import { useAuth } from '../../context/AuthContext'
 export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clearSearch }) {
   const { user } = useAuth()
   const backdropRef = useRef(null)
+  const genreRef = useRef(null)
+
   const [formData, setFormData] = useState(book || {})
   const [feedback, setFeedback] = useState('')
+  const [showGenreWarning, setShowGenreWarning] = useState(false)
 
   useEffect(() => {
     if (isOpen && book) {
       setFormData(book)
       setFeedback('')
+      setShowGenreWarning(false)
     }
   }, [isOpen, book])
 
   const handleChange = (field) => (e) => {
     setFormData({ ...formData, [field]: e.target.value })
+    if (field === 'genre') {
+      setShowGenreWarning(false)
+    }
   }
 
   const handleImageUpload = async (e) => {
@@ -55,43 +62,76 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
   }
 
   const handleSubmit = async () => {
+    // Basic validation
     if (!formData.title || !formData.author) {
-        setFeedback('❌ Title and author are required.')
-        return
+      setFeedback('❌ Title and author are required.')
+      return
     }
 
+    // Genre validation
+    const rawGenre = Array.isArray(formData.genre)
+      ? formData.genre.join(', ')
+      : (formData.genre || '')
+
+    // Genre validation
+    if (!rawGenre.trim()) {
+      setShowGenreWarning(true)
+      genreRef.current?.focus()
+      return
+    }
+
+    // fetch user display name
+    const { data: profile, error: profileError } = await supabase
+      .from('users')
+      .select('display_name')
+      .eq('id', user.id)
+      .single()
+    if (profileError) {
+      console.error('Could not load profile:', profileError.message)
+      setFeedback('❌ Failed to load user profile.')
+      return
+    }
+
+    // Build payload
     const payload = {
-        title: formData.title,
-        author: formData.author,
-        cover_url: formData.cover_url || '',
-        genre: formData.genre?.split(',').map((g) => g.trim()) || [],
-        page_count: formData.page_count ? parseInt(formData.page_count) : null,
-        country: formData.country || '',
-        author_gender: formData.author_gender || '',
-        user_id: user.id,
+      title: formData.title,
+      author: formData.author,
+      cover_url: formData.cover_url || '',
+      genre: rawGenre.split(',').map((g) => g.trim()),
+      page_count: formData.page_count ? parseInt(formData.page_count) : null,
+      country: formData.country || '',
+      author_gender: formData.author_gender || '',
+      user_id: user.id,
+      added_by: profile.display_name,
     }
 
+    // Upsert
     let error
     if (formData.id) {
-        // Edit mode: update existing row
-        const res = await supabase.from('books').update(payload).eq('id', formData.id)
-        error = res.error
+      const res = await supabase
+        .from('books')
+        .update(payload)
+        .eq('id', formData.id)
+      error = res.error
     } else {
-        // Add mode: insert new row
-        const res = await supabase.from('books').insert(payload)
-        error = res.error
+      const res = await supabase.from('books').insert(payload)
+      error = res.error
     }
 
     if (error) {
-        setFeedback(`❌ Failed to save book: ${error.message}`)
+      setFeedback(`❌ Failed to save book: ${error.message}`)
     } else {
-        setFeedback('✅ Book saved!')
-        setTimeout(() => {
+      setFeedback('✅ Book saved!')
+      // ← trigger parent refresh and clear selector
+      onBookAdded()
+      clearSearch()
+      // then close modal
+      setTimeout(() => {
         onClose()
         setFeedback('')
-        }, 1000)
+      }, 1000)
     }
-    }
+  }
 
   return createPortal(
     <Box
@@ -130,16 +170,71 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
 
           <Input type="file" accept="image/*" onChange={handleImageUpload} />
 
-          <Input value={formData.title} onChange={handleChange('title')} placeholder="Title" />
-          <Input value={formData.author} onChange={handleChange('author')} placeholder="Author" />
-          <Input value={formData.genre} onChange={handleChange('genre')} placeholder="Genre (comma-separated)" />
-          <Input value={formData.page_count} type="number" onChange={handleChange('page_count')} placeholder="Page Count" />
-          <Input value={formData.country} onChange={handleChange('country')} placeholder="Country" />
-          <Input value={formData.author_gender} onChange={handleChange('author_gender')} placeholder="Author Gender" />
-          <Textarea value={formData.cover_url} onChange={handleChange('cover_url')} placeholder="Cover URL" />
+          <Input
+            value={formData.title}
+            onChange={handleChange('title')}
+            placeholder="Title"
+          />
+          <Input
+            value={formData.author}
+            onChange={handleChange('author')}
+            placeholder="Author"
+          />
+
+          <Box position="relative">
+            <Input
+              ref={genreRef}
+              value={formData.genre || ''}
+              onChange={handleChange('genre')}
+              placeholder="Genre (comma-separated)"
+            />
+            {showGenreWarning && (
+              <Box
+                position="absolute"
+                top="100%"
+                left="0"
+                mt="1"
+                bg="yellow.100"
+                px="2"
+                py="1"
+                borderRadius="md"
+                boxShadow="md"
+                zIndex="tooltip"
+              >
+                <Text fontSize="xs" color="yellow.800">
+                  Write in a genre
+                </Text>
+              </Box>
+            )}
+          </Box>
+
+          <Input
+            value={formData.page_count || ''}
+            type="number"
+            onChange={handleChange('page_count')}
+            placeholder="Page Count"
+          />
+          <Input
+            value={formData.country || ''}
+            onChange={handleChange('country')}
+            placeholder="Country"
+          />
+          <Input
+            value={formData.author_gender || ''}
+            onChange={handleChange('author_gender')}
+            placeholder="Author Gender"
+          />
+          <Textarea
+            value={formData.cover_url || ''}
+            onChange={handleChange('cover_url')}
+            placeholder="Cover URL"
+          />
 
           {feedback && (
-            <Text fontSize="sm" color={feedback.startsWith('✅') ? 'green.500' : 'red.500'}>
+            <Text
+              fontSize="sm"
+              color={feedback.startsWith('✅') ? 'green.500' : 'red.500'}
+            >
               {feedback}
             </Text>
           )}
@@ -147,7 +242,7 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
           <Box display="flex" justifyContent="flex-end" gap={3}>
             <Button onClick={onClose}>Cancel</Button>
             <Button colorScheme="blue" onClick={handleSubmit}>
-              Add to Waitlist
+              {formData.id ? 'Save Changes' : 'Add to Waitlist'}
             </Button>
           </Box>
         </VStack>

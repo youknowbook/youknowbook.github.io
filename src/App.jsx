@@ -11,8 +11,9 @@ import PrivateRoute from './components/Layout/PrivateRoute'
 import AdminRoute from './components/Layout/AdminRoute'
 import { useAuth } from './context/AuthContext'
 import { Box, Button, Heading, Text, VStack } from '@chakra-ui/react'
+import ResetPassword from './components/Auth/ResetPassword'
 
-const basename = '/you-know-book-page'
+const basename = import.meta.env.BASE_URL
 
 function Home() {
   const { user } = useAuth()
@@ -45,6 +46,7 @@ function App() {
         {/* Public Routes */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
 
         {/* Auth-dependent Home */}
         <Route path="/" element={<Home />} />

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link as RouterLink } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import {
   Box,
@@ -12,7 +12,6 @@ import {
 import { supabase } from '../../api/supabaseClient'
 import { Link } from 'react-router-dom'
 
-
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -22,6 +21,30 @@ export default function Login() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
+  const base = import.meta.env.BASE_URL
+
+  // — New: send reset email with proper redirect
+  const handleForgotPassword = async () => {
+    setError('')
+    setSuccess('')
+
+    if (!email) {
+      setError('Please enter your email to reset your password.')
+      return
+    }
+
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+       redirectTo: `${window.location.origin}${base}reset-password`
+    })
+
+    if (resetError) {
+      console.error(resetError)
+      setError(resetError.message)
+    } else {
+      setSuccess('✅ Check your inbox for the password reset link.')
+    }
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
@@ -29,17 +52,15 @@ export default function Login() {
 
     try {
       const { data: loginData, error: loginError } = await login(email, password)
-
       if (loginError) throw loginError
 
+      // ensure user profile exists…
       const { data: authUserData, error: userError } = await supabase.auth.getUser()
       const user = authUserData?.user
       if (userError || !user) {
         setError('Could not retrieve user data.')
         return
       }
-
-      // Check if profile exists
       const { data: profileData, error: profileError } = await supabase
         .from('users')
         .select('id')
@@ -48,7 +69,6 @@ export default function Login() {
 
       if (!profileData && !profileError) {
         const displayName = localStorage.getItem('pendingDisplayName') || ''
-
         const { error: insertError } = await supabase.from('users').insert({
           id: user.id,
           display_name: displayName,
@@ -56,15 +76,12 @@ export default function Login() {
           profile_picture: null,
           favourite_books: []
         })
-
-        localStorage.removeItem('pendingDisplayName') // cleanup
-
+        localStorage.removeItem('pendingDisplayName')
         if (insertError) throw insertError
       }
 
-      setSuccess('Logged in!')
-      navigate('/profile')
-
+      setSuccess('Logged in! Redirecting…')
+      setTimeout(() => navigate('/profile'), 800)
     } catch (err) {
       console.error(err)
       setError(err.message || 'Login failed.')
@@ -83,7 +100,7 @@ export default function Login() {
 
       {success && (
         <Box bg="green.100" borderRadius="md" p={3} mb={4}>
-          <Text color="green.800" fontWeight="medium">✅ {success}</Text>
+          <Text color="green.800" fontWeight="medium">{success}</Text>
         </Box>
       )}
 
@@ -91,6 +108,7 @@ export default function Login() {
         <VStack spacing={4}>
           <Input
             placeholder="Email"
+            type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
@@ -103,12 +121,20 @@ export default function Login() {
           <Button type="submit" colorScheme="blue" width="full">
             Log In
           </Button>
+
+          <Text mt="2" textAlign="right">
+            <Link onClick={handleForgotPassword} cursor="pointer" fontSize="sm">
+              Forgot your password?
+            </Link>
+          </Text>
         </VStack>
       </form>
 
       <Text mt="4">
         Don’t have an account?{' '}
-        <Link to="/register" style={{ color: '#3182ce' }}>Register</Link>
+        <Link as={RouterLink} to="/register" color="blue.500">
+          Register
+        </Link>
       </Text>
     </Box>
   )
