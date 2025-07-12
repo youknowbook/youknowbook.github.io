@@ -22,10 +22,30 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
   const [showGenreWarning, setShowGenreWarning] = useState(false)
 
   useEffect(() => {
-    if (isOpen && book) {
-      setFormData(book)
-      setFeedback('')
-      setShowGenreWarning(false)
+    if (isOpen && book?.id) {
+      // re-fetch the full book record so we always get current values
+      supabase
+        .from('books')
+        .select('id, title, author, cover_url, genre, page_count, country, author_gender, user_id, added_by, message, release_year')
+        .eq('id', book.id)
+        .single()
+        .then(({ data, error }) => {
+          if (error) {
+            console.error('Could not load book data:', error)
+            // fall back to whatever was passed
+            setFormData(book)
+          } else {
+            setFormData({
+              ...data,
+              // if genre is stored as an array, show it as a comma-separated string in the input
+              genre: Array.isArray(data.genre) ? data.genre.join(', ') : data.genre,
+              message: data.message || '',
+              release_year: data.release_year || '',
+            })
+          }
+          setFeedback('')
+          setShowGenreWarning(false)
+        })
     }
   }, [isOpen, book])
 
@@ -47,8 +67,8 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
       .upload(filePath, file)
 
     if (uploadError) {
-      console.error('❌ Upload failed:', uploadError.message)
-      setFeedback(`❌ Image upload failed: ${uploadError.message}`)
+      console.error('❌ Feltöltési hiba:', uploadError.message)
+      setFeedback(`❌ Képfeltöltési hiba: ${uploadError.message}`)
       return
     }
 
@@ -58,13 +78,13 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
 
     const imageUrl = publicUrlData?.publicUrl
     setFormData((prev) => ({ ...prev, cover_url: imageUrl }))
-    setFeedback('✅ Image uploaded successfully.')
+    setFeedback('✅ A képet sikeresen feltöltöttük.')
   }
 
   const handleSubmit = async () => {
     // Basic validation
     if (!formData.title || !formData.author) {
-      setFeedback('❌ Title and author are required.')
+      setFeedback('❌ A cím és a szerző nem elérhető.')
       return
     }
 
@@ -87,8 +107,8 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
       .eq('id', user.id)
       .single()
     if (profileError) {
-      console.error('Could not load profile:', profileError.message)
-      setFeedback('❌ Failed to load user profile.')
+      console.error('Nem tudtuk betölteni a profilt:', profileError.message)
+      setFeedback('❌ Profil betöltési hiba.')
       return
     }
 
@@ -101,8 +121,10 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
       page_count: formData.page_count ? parseInt(formData.page_count) : null,
       country: formData.country || '',
       author_gender: formData.author_gender || '',
+      release_year: formData.release_year ? parseInt(formData.release_year) : null,
       user_id: user.id,
-      added_by: profile.display_name,
+      message: formData.message || '', 
+      added_by: formData.added_by ? formData.added_by : profile.display_name,
     }
 
     // Upsert
@@ -119,9 +141,9 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
     }
 
     if (error) {
-      setFeedback(`❌ Failed to save book: ${error.message}`)
+      setFeedback(`❌ Nem tudtuk elmenteni a könyvet: ${error.message}`)
     } else {
-      setFeedback('✅ Book saved!')
+      setFeedback('✅ Könyv mentve!')
       // ← trigger parent refresh and clear selector
       onBookAdded()
       clearSearch()
@@ -160,7 +182,7 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
           {formData.cover_url && (
             <Image
               src={formData.cover_url}
-              alt="Book cover"
+              alt="Könyvborító"
               boxSize="120px"
               objectFit="cover"
               borderRadius="md"
@@ -173,12 +195,12 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
           <Input
             value={formData.title}
             onChange={handleChange('title')}
-            placeholder="Title"
+            placeholder="Cím"
           />
           <Input
             value={formData.author}
             onChange={handleChange('author')}
-            placeholder="Author"
+            placeholder="Szerző"
           />
 
           <Box position="relative">
@@ -186,7 +208,7 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
               ref={genreRef}
               value={formData.genre || ''}
               onChange={handleChange('genre')}
-              placeholder="Genre (comma-separated)"
+              placeholder="Műfaj(ok) - veszzőkkel elválasztva"
             />
             {showGenreWarning && (
               <Box
@@ -202,7 +224,7 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
                 zIndex="tooltip"
               >
                 <Text fontSize="xs" color="yellow.800">
-                  Write in a genre
+                  Írj be legalább egy műfajt
                 </Text>
               </Box>
             )}
@@ -212,22 +234,28 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
             value={formData.page_count || ''}
             type="number"
             onChange={handleChange('page_count')}
-            placeholder="Page Count"
+            placeholder="Oldalszám"
           />
           <Input
             value={formData.country || ''}
             onChange={handleChange('country')}
-            placeholder="Country"
+            placeholder="Ország"
           />
           <Input
             value={formData.author_gender || ''}
             onChange={handleChange('author_gender')}
-            placeholder="Author Gender"
+            placeholder="A szerző neme (pl. férfi, nő, egyéb)"
+          />
+          <Input
+            value={formData.release_year || ''}
+            onChange={handleChange('release_year')}
+            placeholder="Kiadási év"
+            type="number"
           />
           <Textarea
-            value={formData.cover_url || ''}
-            onChange={handleChange('cover_url')}
-            placeholder="Cover URL"
+            value={formData.message}
+            onChange={handleChange('message')}
+            placeholder="Miért ajánlod olvasására? (opcionális)"
           />
 
           {feedback && (
@@ -240,9 +268,9 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
           )}
 
           <Box display="flex" justifyContent="flex-end" gap={3}>
-            <Button onClick={onClose}>Cancel</Button>
+            <Button onClick={onClose}>Vissza</Button>
             <Button colorScheme="blue" onClick={handleSubmit}>
-              {formData.id ? 'Save Changes' : 'Add to Waitlist'}
+              {formData.id ? 'Mentés' : 'Várolistára'}
             </Button>
           </Box>
         </VStack>

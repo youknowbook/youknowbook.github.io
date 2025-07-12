@@ -29,7 +29,7 @@ export default function Login() {
     setSuccess('')
 
     if (!email) {
-      setError('Please enter your email to reset your password.')
+      setError('Kérlek add meg az email-címed, hogy új jelszót kérhess.')
       return
     }
 
@@ -41,7 +41,7 @@ export default function Login() {
       console.error(resetError)
       setError(resetError.message)
     } else {
-      setSuccess('✅ Check your inbox for the password reset link.')
+      setSuccess('✅ Nézd meg az emaljeidet, elküldtük a jelszó-visszaállító linket!')
     }
   }
 
@@ -58,7 +58,7 @@ export default function Login() {
       const { data: authUserData, error: userError } = await supabase.auth.getUser()
       const user = authUserData?.user
       if (userError || !user) {
-        setError('Could not retrieve user data.')
+        setError('Nem tudtuk betölteni a felhasználói adatokat. Kérlek, jelentkezz be újra.')
         return
       }
       const { data: profileData, error: profileError } = await supabase
@@ -80,11 +80,11 @@ export default function Login() {
         if (insertError) throw insertError
       }
 
-      setSuccess('Logged in! Redirecting…')
+      setSuccess('Bejelentkeztél! Átirányítunk...')
       setTimeout(() => navigate('/profile'), 800)
     } catch (err) {
       console.error(err)
-      setError(err.message || 'Login failed.')
+      setError(err.message || 'Bejelentkezési hiba. Kérlek, próbáld újra.')
     }
   }
 
@@ -119,21 +119,21 @@ export default function Login() {
             onChange={(e) => setPassword(e.target.value)}
           />
           <Button type="submit" colorScheme="blue" width="full">
-            Log In
+            Bejelentkezés
           </Button>
 
           <Text mt="2" textAlign="right">
             <Link onClick={handleForgotPassword} cursor="pointer" fontSize="sm">
-              Forgot your password?
+              Elfelejtett jelszó?
             </Link>
           </Text>
         </VStack>
       </form>
 
       <Text mt="4">
-        Don’t have an account?{' '}
+        Nincs felhasnzálód?{' '}
         <Link as={RouterLink} to="/register" color="blue.500">
-          Register
+          Regisztrálj!
         </Link>
       </Text>
     </Box>

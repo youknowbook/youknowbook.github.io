@@ -29,7 +29,7 @@ export default function Register() {
       const user = data.user
 
       if (!user) {
-        alert('Please confirm your email before logging in.')
+        alert('Erősítsd meg az e-mail címed, mielőtt belépnél!')
         return
       }
       
@@ -61,7 +61,7 @@ export default function Register() {
       <form onSubmit={handleSubmit}>
         <VStack spacing={4}>
           <Input
-            placeholder="Display Name"
+            placeholder="Név"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
           />
@@ -71,20 +71,20 @@ export default function Register() {
             onChange={(e) => setEmail(e.target.value)}
           />
           <Input
-            placeholder="Password"
+            placeholder="Jelszó"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
           <Button type="submit" colorScheme="blue" width="full">
-            Sign Up
+            Regiszráció
           </Button>
         </VStack>
       </form>
 
       <Text mt="4">
-        Already have an account?{' '}
-        <Link to="/login" style={{ color: '#3182ce' }}>Log in</Link>
+        Már van felhasználód?{' '}
+        <Link to="/login" style={{ color: '#3182ce' }}>Jelentkezz be!</Link>
       </Text>
     </Box>
   )

@@ -17,7 +17,7 @@ export default function AdminRoute() {
     return (
       <Box textAlign="center" mt={10}>
         <Text fontSize="xl" color="red.500">
-          ❌ You do not have permission to view this page.
+          ❌ Nincs jogosultságod az oldal megtekintéséhez.
         </Text>
         <Navigate to="/" replace />
       </Box>

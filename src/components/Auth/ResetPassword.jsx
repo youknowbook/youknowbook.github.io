@@ -25,7 +25,7 @@ export default function ResetPassword() {
     // Now we just fetch that session:
     supabase.auth.getSession().then(({ data: { session }, error }) => {
       if (error || !session) {
-        setError('Invalid or expired reset link.')
+        setError('Leját vagy érvénytelen link.')
       } else {
         setReady(true)
       }
@@ -38,7 +38,7 @@ export default function ResetPassword() {
     setSuccess('')
 
     if (!password || password !== confirmPassword) {
-      setError('Passwords must match and not be empty.')
+      setError('A jelszavaknak egyezniük kell és nem lehetnek üresek.')
       return
     }
 
@@ -48,7 +48,7 @@ export default function ResetPassword() {
     if (updateError) {
       setError(updateError.message)
     } else {
-      setSuccess('Password updated! Redirecting to login…')
+      setSuccess('A jelszó sikeresen megváltozott! Most már bejelentkezhetsz.')
       setTimeout(() => navigate('/login'), 2000)
     }
   }
@@ -59,7 +59,7 @@ export default function ResetPassword() {
       <Box maxW="md" mx="auto" mt="10" textAlign="center">
         {error
           ? <Text color="red.500">{error}</Text>
-          : <Text>Verifying reset link…</Text>}
+          : <Text>Ellenőrízzük a link hitelességét...</Text>}
       </Box>
     )
   }
@@ -67,7 +67,7 @@ export default function ResetPassword() {
   // Otherwise, show the reset form
   return (
     <Box maxW="md" mx="auto" mt="10">
-      <Heading mb="6">Reset Password</Heading>
+      <Heading mb="6">Jelszó visszaállítás </Heading>
 
       {error && <Text color="red.500" mb="4">{error}</Text>}
       {success && <Text color="green.500" mb="4">{success}</Text>}
@@ -75,19 +75,19 @@ export default function ResetPassword() {
       <form onSubmit={handleSubmit}>
         <VStack spacing={4}>
           <Input
-            placeholder="New password"
+            placeholder="Új jelszó"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
           <Input
-            placeholder="Confirm new password"
+            placeholder="Új jelszó újra"
             type="password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
           />
           <Button type="submit" colorScheme="blue" width="full">
-            Reset Password
+            Jelszó visszaállítás
           </Button>
         </VStack>
       </form>

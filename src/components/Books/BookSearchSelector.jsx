@@ -45,13 +45,13 @@ const BookSearchSelector = forwardRef(({ onBookClick }, ref) => {
           genre: info.categories || [],
           country: info.language || '',
         }
-        console.log("📘 Parsed book:", parsedItem)
+        console.log("📘 Keresett könyv:", parsedItem)
         return parsedItem
       })
 
       setResults(parsed)
     } catch (err) {
-      console.error('Search error:', err)
+      console.error('Keresési hiba:', err)
       setResults([])
     }
     setLoading(false)
@@ -60,7 +60,7 @@ const BookSearchSelector = forwardRef(({ onBookClick }, ref) => {
   return (
     <Box>
       <Input
-        placeholder="Search for a book (press Enter)"
+        placeholder="Keress könyvet cím vagy szerző alapján (enterrel keres)"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={handleSearch}
@@ -78,7 +78,7 @@ const BookSearchSelector = forwardRef(({ onBookClick }, ref) => {
             borderRadius="md"
             _hover={{ bg: 'gray.50', cursor: 'pointer' }}
             onClick={() => {
-              console.log("✅ Book clicked:", book)
+              console.log("✅ Könyv kiválasztva:", book)
               onBookClick(book)
               setQuery('')
               setResults([])

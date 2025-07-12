@@ -7,16 +7,17 @@ import {
   IconButton,
   Button,
   Stack,
+  Image
 } from '@chakra-ui/react'
 import { useState } from 'react'
 import { FaBars, FaTimes } from 'react-icons/fa'
 
 const navItems = [
-  { label: 'Dashboard', path: '/' },
-  { label: 'Profile', path: '/profile' },
-  { label: 'Members', path: '/members' },
-  { label: 'Books', path: '/books' },
-  { label: 'Stats', path: '/stats' },
+  { label: 'Főoldal', path: '/' },
+  { label: 'Profilom', path: '/profile' },
+  { label: 'Tagok', path: '/members' },
+  { label: 'Könyvsarok', path: '/books' },
+  { label: 'Statisztikák', path: '/stats' },
 ]
 
 export default function PrivateRoute() {
@@ -36,7 +37,17 @@ export default function PrivateRoute() {
     <>
       <Box bg="gray.100" px={4} mb={4} boxShadow="md">
         <Flex h={16} alignItems="center" justifyContent="space-between">
-          <Box fontWeight="bold">{userData?.is_admin ? "📚 Book Club (Admin)" : "📚 Book Club"}</Box>
+          <Box fontWeight="bold" display="flex" alignItems="center">
+            <Image
+              src="public/black_rectangle_transparent.png"
+              alt="YKB Logo"
+              h="16"
+              ml="4"
+              mr="4"
+              objectFit="contain"
+            />
+            {userData?.is_admin ? 'you-know-book (admin)' : 'you-know-book'}
+          </Box>
 
           {/* Desktop */}
           <HStack as="nav" spacing={4} display={{ base: 'none', md: 'flex' }}>
@@ -62,13 +73,13 @@ export default function PrivateRoute() {
             )}
 
             <Button size="sm" colorScheme="red" onClick={logout}>
-              Log out
+              Kijelentkezés
             </Button>
           </HStack>
 
           {/* Mobile Toggle */}
           <IconButton
-            aria-label="Toggle Menu"
+            aria-label="Menü kinyit/becsuk"
             display={{ base: 'inline-flex', md: 'none' }}
             onClick={() => setMenuOpen(!menuOpen)}
             variant="ghost"
@@ -103,7 +114,7 @@ export default function PrivateRoute() {
               )}
 
               <Button size="sm" colorScheme="red" onClick={logout}>
-                Log out
+                Kijelentkezés
               </Button>
             </Stack>
           </Box>

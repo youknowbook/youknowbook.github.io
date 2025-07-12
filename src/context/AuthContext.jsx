@@ -30,7 +30,7 @@ export const AuthProvider = ({ children }) => {
       if (!error) {
         setUserData(data)
       } else {
-        console.error('Failed to load userData:', error.message)
+        console.error('Nem tudtuk betölteni a felhasználói adatokat:', error.message)
         setUserData(null)
       }
     }

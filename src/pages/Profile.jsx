@@ -1,15 +1,15 @@
+import React, { useState, useEffect, useRef } from 'react'
 import {
   Box,
-  Button,
   Input,
+  Text,
+  Button,
+  Image,
   VStack,
   Heading,
-  Text,
-  Image,
   Separator,
   Flex
 } from '@chakra-ui/react'
-import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../api/supabaseClient'
 import BookSearchSelector from '../components/Books/BookSearchSelector'
@@ -20,6 +20,9 @@ export default function Profile() {
   const [motto, setMotto] = useState('')
   const [profilePic, setProfilePic] = useState('')
   const [favouriteBooks, setFavouriteBooks] = useState([])
+  const [saveFeedback, setSaveFeedback] = useState('')
+  const [uploadFeedback, setUploadFeedback] = useState('')
+  const [maxReachedFeedback, setMaxReachedFeedback] = useState(false)
   const fileInputRef = useRef(null)
 
   // Load profile data
@@ -30,9 +33,8 @@ export default function Profile() {
         .select('*')
         .eq('id', user.id)
         .single()
-
       if (error) {
-        console.error("❌ Failed to fetch profile:", error)
+        console.error('❌ Profil betöltése sikertelen:', error)
         return
       }
 
@@ -40,107 +42,94 @@ export default function Profile() {
       setMotto(data.motto || '')
       setProfilePic(data.profile_picture || '')
       setFavouriteBooks(
-        Array.isArray(data.favourite_books) ? data.favourite_books : []
+        (Array.isArray(data.favourite_books) ? data.favourite_books : []).map(b => ({
+          ...b,
+          cover: b.cover || ''
+        }))
       )
     }
-
     if (user) fetchProfile()
   }, [user])
 
-  // Upload image to Supabase
-  const handleImageUpload = async (e) => {
-    const file = e.target.files[0]
+  // Upload profile picture
+  const handleProfilePicUpload = async e => {
+    const file = e.target.files?.[0]
     if (!file || !user) return
 
-    const filePath = `${user.id}/${Date.now()}_${file.name}`
-
-    const { error: uploadError } = await supabase.storage
-      .from('profile-pictures')
-      .upload(filePath, file)
-
-    if (uploadError) {
-      console.error('❌ Upload failed:', uploadError.message)
+    const path = `${user.id}/${Date.now()}_${file.name}`
+    const { error: uploadErr } = await supabase.storage
+      .from('book-covers')
+      .upload(path, file)
+    if (uploadErr) {
+      console.error('❌ Profile feltöltése sikertelen:', uploadErr)
+      setUploadFeedback('❌ Profilkép feltöltése sikertelen.')
       return
     }
-
     const { data: urlData } = supabase.storage
-      .from('profile-pictures')
-      .getPublicUrl(filePath)
-
-    const publicUrl = urlData?.publicUrl
-    setProfilePic(publicUrl)
+      .from('book-covers')
+      .getPublicUrl(path)
+    setProfilePic(urlData.publicUrl)
   }
 
-  // Handle saving profile
+  // Add a favorite book (with cover)
+  const handleAddBook = book => {
+    if (favouriteBooks.length >= 4) return
+    const simplified = { /* ...same as before... */ }
+    if (!favouriteBooks.some(b => b.key === simplified.key)) {
+      setFavouriteBooks(prev => {
+        const next = [...prev, simplified]
+        if (next.length === 4) {
+          setMaxReachedFeedback(true)
+          setTimeout(() => setMaxReachedFeedback(false), 3000)
+        }
+        return next
+      })
+    }
+}
+
+  const handleRemoveBook = target => {
+    setFavouriteBooks(prev => prev.filter(b => b.key !== target.key))
+  }
+
+  // Save profile
   const handleSave = async () => {
-    const sanitizedBooks = favouriteBooks.map((b) => ({
-      title: b.title || '',
+    const sanitizedBooks = favouriteBooks.map(b => ({
+      title:  b.title || '',
       author: b.author || '',
-      key: b.key || '',
+      key:    b.key || '',
+      cover:  b.cover || ''
     }))
 
     const { error } = await supabase
       .from('users')
       .update({
-        display_name: displayName,
+        display_name:    displayName,
         motto,
         profile_picture: profilePic,
-        favourite_books: sanitizedBooks,
+        favourite_books: sanitizedBooks
       })
       .eq('id', user.id)
 
     if (error) {
-      console.error('❌ Failed to save profile:', error.message)
+      console.error('❌ Profil mentése sikertelen:', error)
+      setSaveFeedback('❌ Profil mentése sikertelen.')
     } else {
-      console.log('✅ Profile saved.')
+      setSaveFeedback('✅ Profil mentve!')
+      setTimeout(() => setSaveFeedback(''), 3000)
     }
-  }
-
-  const handleProfilePicUpload = async (e) => {
-    const file = e.target.files[0]
-    if (!file || !user) return
-
-    const filePath = `${user.id}/${Date.now()}_${file.name}`
-    const { error } = await supabase.storage
-      .from('profile-pictures')
-      .upload(filePath, file)
-
-    if (error) {
-      console.error('Failed to upload profile picture:', error.message)
-      return
-    }
-
-    const { data } = supabase.storage
-      .from('profile-pictures')
-      .getPublicUrl(filePath)
-
-    setProfilePic(data?.publicUrl || '')
-  }
-
-
-  const handleAddBook = (book) => {
-    if (favouriteBooks.length >= 4) return
-    const simplified = {
-      title: book.title,
-      author: book.author_name?.[0] || book.author || 'Unknown',
-      key: book.key,
-    }
-    if (!favouriteBooks.some(b => b.key === simplified.key)) {
-      setFavouriteBooks(prev => [...prev, simplified])
-    }
-  }
-
-  const handleRemoveBook = (target) => {
-    setFavouriteBooks(prev => prev.filter(b => b.key !== target.key))
   }
 
   return (
-    <Box maxW="lg" mx="auto" mt={10}>
-      <Heading mb={6}>Your Profile</Heading>
+    <Box maxW="lg" mx="auto" mt={10} px={4}>
+      <Heading mb={6}>A profilom</Heading>
+
       <Flex gap={6} alignItems="center">
         <Box position="relative" boxSize="150px" flexShrink={0}>
           <Image
-            src={profilePic || 'https://axgruqqfgmuvrhdvcgwj.supabase.co/storage/v1/object/public/profile-pictures//default-avatar-icon-of-social-media-user-vector.jpg'}
+            src={
+              profilePic ||
+              'https://axgruqqfgmuvrhdvcgwj.supabase.co/storage/v1/object/public/book-covers/default-avatar-icon-of-social-media-user-vector.jpg'
+            }
             alt="Profile"
             boxSize="100%"
             objectFit="cover"
@@ -158,7 +147,7 @@ export default function Profile() {
             cursor="pointer"
             onClick={() => fileInputRef.current?.click()}
           >
-            Change Profile Picture
+            Profilkép feltöltése
           </Box>
           <input
             type="file"
@@ -170,55 +159,163 @@ export default function Profile() {
         </Box>
 
         <VStack align="start" spacing={2} flexGrow={1}>
-          <Text>Display Name:</Text>
-          <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-          <Text>Motto:</Text>
-          <Input value={motto} onChange={(e) => setMotto(e.target.value)} />
+          <Text>A nevem:</Text>
+          <Input
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+          />
+          <Text>Jelmondat/idézet:</Text>
+          <Input
+            value={motto}
+            onChange={e => setMotto(e.target.value)}
+          />
         </VStack>
       </Flex>
 
-      <VStack spacing={4} align="stretch">
-        <Separator my={4} />
+      <VStack spacing={4} align="stretch" mt={8}>
+        <Separator />
 
-        <Text>Favorite Books (max 4):</Text>
-        <BookSearchSelector
-          onBookClick={handleAddBook}
-          disableIf={(book) =>
-            favouriteBooks.length >= 4 ||
-            favouriteBooks.some((b) => b.key === book.key)
-          }
-        />
+        <Text>Kedvenc könyveim (maximum 4):</Text>
 
-        <Box display="flex" flexWrap="wrap" gap={2}>
-          {favouriteBooks.map((book) => (
-            <Box
-              key={book.key}
-              px={3}
-              py={1}
-              bg="gray.100"
-              borderRadius="full"
-              display="flex"
-              alignItems="center"
-            >
-              <Text>{book.title}</Text>
+        <Box
+          opacity={favouriteBooks.length >= 4 ? 0.5 : 1}
+          pointerEvents={favouriteBooks.length >= 4 ? 'none' : 'auto'}
+        >
+          <BookSearchSelector
+            onBookClick={handleAddBook}
+            disableIf={book =>
+              favouriteBooks.length >= 4 ||
+              favouriteBooks.some(b => b.key === book.key)
+            }
+          />
+        </Box>
+
+        {maxReachedFeedback && (
+          <Text color="red.500" fontSize="sm">
+            Kiválasztottál 4 kedvenc könyvet!
+          </Text>
+        )}
+
+        <Flex wrap="wrap" alignItems="center" justify="center" gap={4}>
+          {favouriteBooks.map(b => (
+            <Box key={b.key} position="relative">
+              {b.cover ? (
+                <Image
+                  src={b.cover}
+                  w="80px"
+                  h="120px"
+                  objectFit="cover"
+                  borderRadius="md"
+                />
+              ) : (
+                <Box
+                  w="80px"
+                  h="120px"
+                  bg="gray.200"
+                  borderRadius="md"
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  textAlign="center"
+                  p={2}
+                >
+                  <VStack spacing={1}>
+                    <Text noOfLines={2} fontSize="xs">
+                      {b.title}
+                    </Text>
+                    <Text fontSize="xx-small" color="gray.600">
+                      Borítókép feltöltése
+                    </Text>
+                  </VStack>
+                </Box>
+              )}
+
+              <Input
+                type="file"
+                accept="image/*"
+                position="absolute"
+                top={0}
+                left={0}
+                w="80px"
+                h="120px"
+                opacity={0}
+                cursor="pointer"
+                onChange={async e => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+
+                  // sanitize filename: strip accents, replace unsafe chars with _
+                  const rawName = file.name.normalize('NFKD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/[^\w.\-]/g, '_')
+
+                  const key = `${user.id}/favs/${b.key}_${Date.now()}_${rawName}`
+                  const { error: uploadErr } = await supabase.storage
+                    .from('book-covers')
+                    .upload(key, file)
+                  if (uploadErr) {
+                    console.error('❌ Borítókép feltöltése meghiúsult:', uploadErr)
+                    setUploadFeedback(`❌ Borítókép feltöltése meghiúsult: ${uploadErr.message}`)
+                    return
+                  }
+
+                  const { data: urlData, error: urlErr } = await supabase.storage
+                    .from('book-covers')
+                    .getPublicUrl(key)
+                  if (urlErr) {
+                    console.error('❌ Nem találom az URL-t:', urlErr)
+                    setUploadFeedback(`❌  Nem találom az URL-t: ${urlErr.message}`)
+                    return
+                  }
+
+                  setUploadFeedback('✅ Borítókép feltöltve!')
+                  setTimeout(() => setUploadFeedback(''), 3000)
+
+                  const publicUrl = urlData.publicUrl
+                  setFavouriteBooks(prev =>
+                    prev.map(x =>
+                      x.key === b.key ? { ...x, cover: publicUrl } : x
+                    )
+                  )
+                }}
+              />
+
+
               <Button
-                size="xs"
-                ml={2}
-                onClick={() => handleRemoveBook(book)}
-                variant="ghost"
-                fontSize="sm"
-                px={1}
-                aria-label="Remove"
+                size="2xs"
+                borderRadius="full"
+                bg="red.500"
+                color="white"
+                position="absolute"
+                top={1}
+                right={1}
+                _hover={{ bg: 'red.600' }}
+                onClick={() => handleRemoveBook(b)}
               >
                 ×
               </Button>
             </Box>
           ))}
-        </Box>
+        </Flex>
 
         <Button colorScheme="green" onClick={handleSave}>
-          Save Profile
+          Profilom mentése
         </Button>
+
+        {saveFeedback && (
+          <Text
+            fontSize="sm"
+            color={saveFeedback.startsWith('✅') ? 'green.500' : 'red.500'}
+          >
+            {saveFeedback}
+          </Text>
+        )}
+
+        {uploadFeedback && (
+          <Text fontSize="sm" color="red.500">
+            {uploadFeedback}
+          </Text>
+        )}
       </VStack>
     </Box>
   )

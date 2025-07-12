@@ -25,14 +25,14 @@ function Home() {
 
   return (
     <Box maxW="md" mx="auto" mt="10">
-      <Heading mb={4}>Welcome to the Book Club</Heading>
+      <Heading mb={4}>Üdvözöl a you-know-book!</Heading>
       <VStack spacing={4}>
-        <Text>If you have an account, please log in. Otherwise, register:</Text>
+        <Text>Ha már van felhasználód, akkor jelentkezz be! Egyéb esetben regisztrálj!:</Text>
         <Button as="a" href={`${basename}/login`} colorScheme="blue" width="full">
-          Login
+          Bejelentkezés
         </Button>
         <Button as="a" href={`${basename}/register`} variant="outline" width="full">
-          Register
+          Regisztráció
         </Button>
       </VStack>
     </Box>
