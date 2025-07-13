@@ -39,21 +39,28 @@ export default function PrivateRoute() {
         <Flex h={16} alignItems="center" justifyContent="space-between">
           <Box fontWeight="bold" display="flex" alignItems="center">
             <Image
-              src="public/black_rectangle_transparent.png"
+              src={userData?.is_admin ? 'public/orange_rectangle_transparent.png' : 'public/black_rectangle_transparent.png'}
               alt="YKB Logo"
               h="16"
               ml="4"
               mr="4"
               objectFit="contain"
+              onClick={() => handleNav('/')}
             />
-            {userData?.is_admin ? 'you-know-book (admin)' : 'you-know-book'}
           </Box>
 
           {/* Desktop */}
-          <HStack as="nav" spacing={4} display={{ base: 'none', md: 'flex' }}>
+          <HStack
+            as="nav"
+            spacing={{ base: 1, md: 4 }}
+            display={{ base: 'none', md: 'flex' }}
+          >
             {navItems.map(({ label, path }) => (
               <Button
                 key={path}
+                size={{ base: 'sm', lg: 'md' }}
+                fontSize={{ base: 'sm', lg: 'md' }}
+                px={{ base: 2, lg: 4 }}
                 variant={location.pathname === path ? 'solid' : 'ghost'}
                 colorScheme="blue"
                 onClick={() => handleNav(path)}
@@ -64,6 +71,9 @@ export default function PrivateRoute() {
 
             {userData?.is_admin && (
               <Button
+                size={{ base: 'sm', lg: 'md' }}
+                fontSize={{ base: 'sm', lg: 'md' }}
+                px={{ base: 2, lg: 4 }}
                 variant={location.pathname === '/admin' ? 'solid' : 'ghost'}
                 colorScheme="purple"
                 onClick={() => handleNav('/admin')}
@@ -72,7 +82,13 @@ export default function PrivateRoute() {
               </Button>
             )}
 
-            <Button size="sm" colorScheme="red" onClick={logout}>
+            <Button
+              size={{ base: 'sm', lg: 'md' }}
+              fontSize={{ base: 'sm', lg: 'md' }}
+              px={{ base: 2, lg: 4 }}
+              colorScheme="red"
+              onClick={logout}
+            >
               Kijelentkezés
             </Button>
           </HStack>

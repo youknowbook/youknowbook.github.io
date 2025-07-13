@@ -8,7 +8,8 @@ import {
   VStack,
   Heading,
   Separator,
-  Flex
+  Flex,
+  SimpleGrid
 } from '@chakra-ui/react'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../api/supabaseClient'
@@ -124,7 +125,7 @@ export default function Profile() {
       <Heading mb={6}>A profilom</Heading>
 
       <Flex gap={6} alignItems="center">
-        <Box position="relative" boxSize="150px" flexShrink={0}>
+        <Box position="relative" boxSize={{base: "40%", sm: "150px"}} flexShrink={0}>
           <Image
             src={
               profilePic ||
@@ -196,7 +197,12 @@ export default function Profile() {
           </Text>
         )}
 
-        <Flex wrap="wrap" alignItems="center" justify="center" gap={4}>
+        <SimpleGrid
+          columns={{ base: 2, sm: 4 }}
+          columnGap={{ base: 2, sm: 4 }}
+          rowGap={{ base: 6, sm: 4 }}
+          justifyItems="center"
+        >
           {favouriteBooks.map(b => (
             <Box key={b.key} position="relative">
               {b.cover ? (
@@ -296,7 +302,7 @@ export default function Profile() {
               </Button>
             </Box>
           ))}
-        </Flex>
+        </SimpleGrid>
 
         <Button colorScheme="green" onClick={handleSave}>
           Profilom mentése

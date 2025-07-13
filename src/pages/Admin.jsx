@@ -27,19 +27,34 @@ export default function Admin() {
   const [errorMsg, setErrorMsg] = useState('')
   const [meetings, setMeetings] = useState([])
 
-  // indexes for cycling
+  // New: track open poll
+  const [hasOpenPoll, setHasOpenPoll] = useState(false)
+  const [voteSuccess, setVoteSuccess] = useState('')
+  const [voteError, setVoteError] = useState('')
+
   const [upcomingIndex, setUpcomingIndex] = useState(0)
   const [pastIndex, setPastIndex] = useState(0)
+  const [stopSuccess, setStopSuccess] = useState('')
+  const [stopError, setStopError]     = useState('')
 
-  // Auto-clear success message after 3s
   useEffect(() => {
     if (success) {
-      const timer = setTimeout(() => setSuccess(''), 3000)
-      return () => clearTimeout(timer)
+      const t = setTimeout(() => setSuccess(''), 3000)
+      return () => clearTimeout(t)
     }
   }, [success])
 
-  // Fetch only books not yet selected
+  // auto-clear vote messages
+  useEffect(() => {
+    if (voteSuccess || voteError) {
+      const t = setTimeout(() => {
+        setVoteSuccess('')
+        setVoteError('')
+      }, 3000)
+      return () => clearTimeout(t)
+    }
+  }, [voteSuccess, voteError])
+
   async function fetchAvailableBooks() {
     const { data, error } = await supabase
       .from('books')
@@ -49,14 +64,26 @@ export default function Admin() {
     else setBooks(data || [])
   }
 
-  // Fetch all meetings with their book info
   async function fetchMeetings() {
     const { data, error } = await supabase
       .from('meetings')
-      .select('id, location, date, time, books(id, title, author)')
+      .select('id, location, date, time, is_active, books(id, title, author)')
     if (error) console.error('Találkozó betöltési hiba:', error)
     else setMeetings(data || [])
   }
+
+  // New: check for open poll
+  useEffect(() => {
+    async function fetchOpenPoll() {
+      const { data, error } = await supabase
+        .from('polls')
+        .select('id')
+        .eq('status', 'open')
+        .single()
+      if (!error && data) setHasOpenPoll(true)
+    }
+    fetchOpenPoll()
+  }, [])
 
   useEffect(() => {
     fetchAvailableBooks()
@@ -77,9 +104,12 @@ export default function Admin() {
       return
     }
 
+    const today0 = new Date().setHours(0, 0, 0, 0)
+    const isActive = new Date(date).setHours(0, 0, 0, 0) > today0
+
     const { error: meetingError } = await supabase
       .from('meetings')
-      .insert([{ book_id: bookId, location, date, time, notes: [] }])
+      .insert([{ book_id: bookId, location, date, time, notes: [], is_active: isActive }])
     if (meetingError) {
       setErrorMsg('❌ Az esemény elkészítése meghiúsult: ' + meetingError.message)
       return
@@ -105,23 +135,81 @@ export default function Admin() {
     setPastIndex(0)
   }
 
-  // split meetings by date
-  const today = new Date().setHours(0, 0, 0, 0)
+  // New: start voting process
+  const handleStartVote = async () => {
+    setVoteSuccess('')
+    setVoteError('')
+
+    // need at least one past meeting
+    const pastMeetings = meetings
+      .filter((m) => !m.is_active)
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+    if (!pastMeetings.length) {
+      setVoteError('❌ Nincs korábbi esemény, amihez szavazást indíthatnál.')
+      return
+    }
+    const lastPastId = pastMeetings[0].id
+
+    const { data, error } = await supabase
+      .from('polls')
+      .insert([{ past_meeting_id: lastPastId, status: 'open' }])
+    if (error) {
+      setVoteError('❌ Szavazás indítása sikertelen: ' + error.message)
+    } else {
+      setVoteSuccess('✅ Szavazás elindítva!')
+      setHasOpenPoll(true)
+    }
+  }
+
+  async function handleStopVoting() {
+    setStopSuccess('')
+    setStopError('')
+
+    // close any open poll
+    const { error } = await supabase
+      .from('polls')
+      .update({ status: 'complete' })
+      .eq('status', 'open')
+
+    if (error) {
+      setStopError('❌ Szavazás leállítása sikertelen: ' + error.message)
+    } else {
+      setStopSuccess('✅ Szavazás leállítva.')
+      setHasOpenPoll(false)
+    }
+  }
+
+
   const upcoming = meetings
-    .filter((m) => new Date(m.date).setHours(0, 0, 0, 0) > today)
+    .filter((m) => m.is_active)
     .sort((a, b) => new Date(a.date) - new Date(b.date))
   const past = meetings
-    .filter((m) => new Date(m.date).setHours(0, 0, 0, 0) <= today)
+    .filter((m) => !m.is_active)
     .sort((a, b) => new Date(b.date) - new Date(a.date))
 
-  // navigation handlers (no circular)
   const prevUpcoming = () => { if (upcomingIndex > 0) setUpcomingIndex(upcomingIndex - 1) }
   const nextUpcoming = () => { if (upcomingIndex < upcoming.length - 1) setUpcomingIndex(upcomingIndex + 1) }
-  const prevPast = () => { if (pastIndex < past.length - 1) setPastIndex(pastIndex + 1) }
-  const nextPast = () => { if (pastIndex > 0) setPastIndex(pastIndex - 1) }
+  const prevPast     = () => { if (pastIndex < past.length - 1)   setPastIndex(pastIndex + 1) }
+  const nextPast     = () => { if (pastIndex > 0)                 setPastIndex(pastIndex - 1) }
 
+  const completeMeeting = async (id) => {
+    await supabase.from('meetings').update({ is_active: false }).eq('id', id)
+    await fetchMeetings()
+    setUpcomingIndex(0)
+    setPastIndex(0)
+  }
+  const revertMeeting = async (id) => {
+    await supabase.from('meetings').update({ is_active: true }).eq('id', id)
+    await fetchMeetings()
+    setUpcomingIndex(0)
+    setPastIndex(0)
+  }
+
+  // zeroed today for revert-button logic
+  const today0 = new Date().setHours(0, 0, 0, 0)
+  
   return (
-    <Box maxW="lg" mx="auto" mt={10}>
+    <Box maxW="lg" mx="auto" mt={10} px={{ base: 2, md: 6 }}>
       <Heading mb={4}>📅 Az esemény elkészítése</Heading>
       <VStack spacing={4} align="stretch">
         {/* Create Meeting Form */}
@@ -176,11 +264,30 @@ export default function Admin() {
               <IoChevronBackSharp size={24} />
             </IconButton>
           )}
-          <Box key={upcoming[upcomingIndex].id} p={3} border="1px solid" borderColor="gray.200" borderRadius="md" flex="1">
+          <Box
+            key={upcoming[upcomingIndex].id}
+            position="relative"
+            p={3}
+            border="1px solid"
+            borderColor="gray.200"
+            borderRadius="md"
+            flex="1"
+          >
             <Text fontWeight="bold">{upcoming[upcomingIndex].books.title}</Text>
             <Text fontSize="sm">{upcoming[upcomingIndex].books.author}</Text>
             <Text fontSize="sm">{upcoming[upcomingIndex].date} @ {upcoming[upcomingIndex].time}</Text>
             <Text fontSize="sm" color="gray.600">Helyszín: {upcoming[upcomingIndex].location}</Text>
+            <Button
+              position="absolute"
+              right="16px"
+              top="50%"
+              transform="translateY(-50%)"
+              size="sm"
+              colorScheme="red"
+              onClick={() => completeMeeting(upcoming[upcomingIndex].id)}
+            >
+              Esemény lezárása
+            </Button>
           </Box>
           {upcoming.length > 1 && (
             <IconButton
@@ -197,6 +304,27 @@ export default function Admin() {
         <Text>Nincs közelgő esemény.</Text>
       )}
 
+      {upcoming.length === 0 && (
+        <Box textAlign="center" mt={6}>
+          {!hasOpenPoll ? (
+            <>
+              <Button colorScheme="teal" onClick={handleStartVote}>
+                Szavazás indítása
+              </Button>
+              {voteSuccess && <Text color="green.500" mt={2}>{voteSuccess}</Text>}
+              {voteError   && <Text color="red.500"   mt={2}>{voteError}</Text>}
+            </>
+          ) : (
+            <>
+              <Text color="blue.600" mb={2}>Szavazás folyamatban…</Text>
+              <Button colorScheme="red" onClick={handleStopVoting}>
+                Szavazás leállítása
+              </Button>
+            </>
+          )}
+        </Box>
+      )}
+
       {/* Past Meetings Carousel */}
       <Heading size="md" mt={8} mb={4}>Korábbi események</Heading>
       {past.length > 0 ? (
@@ -204,18 +332,39 @@ export default function Admin() {
           {past.length > 1 && (
             <IconButton
               onClick={prevPast}
-              isDisabled={pastIndex === past.length - 1}
+              isDisabled={pastIndex < past.length - 1}
               aria-label="Régebbiek"
               opacity={pastIndex === past.length - 1 ? 0.4 : 1}
             >
               <IoChevronBackSharp size={24} />
             </IconButton>
           )}
-          <Box key={past[pastIndex].id} p={3} border="1px solid" borderColor="gray.200" borderRadius="md" flex="1">
+          <Box
+            key={past[pastIndex].id}
+            position="relative"
+            p={3}
+            border="1px solid"
+            borderColor="gray.200"
+            borderRadius="md"
+            flex="1"
+          >
             <Text fontWeight="bold">{past[pastIndex].books.title}</Text>
             <Text fontSize="sm">{past[pastIndex].books.author}</Text>
             <Text fontSize="sm">{past[pastIndex].date} @ {past[pastIndex].time}</Text>
             <Text fontSize="sm" color="gray.600">Helyszín: {past[pastIndex].location}</Text>
+            {new Date(past[pastIndex].date).setHours(0,0,0,0) > today0 && (
+              <Button
+                position="absolute"
+                right="16px"
+                top="50%"
+                transform="translateY(-50%)"
+                size="sm"
+                colorScheme="green"
+                onClick={() => revertMeeting(past[pastIndex].id)}
+              >
+                Visszaállít
+              </Button>
+            )}
           </Box>
           {past.length > 1 && (
             <IconButton

@@ -32,7 +32,7 @@ export default function Members() {
   const closePopover = () => setSelectedBook(null)
 
   return (
-    <VStack spacing={6} align="stretch" maxW="4xl" mx="auto" mt={6}>
+    <VStack spacing={6} align="stretch" maxW="4xl" mx="auto" mt={6} px={{ base: 2, md: 6 }}>
       {members.map(member => (
         <Stack
           key={member.id}
@@ -66,7 +66,7 @@ export default function Members() {
               justify={{ base: 'center', sm: 'space-between' }}
               overflowX={{ base: 'auto', sm: 'visible' }}
               py={2}
-              px={{ base: 4, SimpleGrid: 0 }}
+              px={{ base: 2, sm: 0 }}
               css={{
                 '&::-webkit-scrollbar': { height: '6px' },
                 '&::-webkit-scrollbar-thumb': { background: '#CBD5E0', borderRadius: '3px' }
