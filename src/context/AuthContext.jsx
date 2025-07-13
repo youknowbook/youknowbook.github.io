@@ -4,46 +4,61 @@ import { supabase } from '../api/supabaseClient'
 const AuthContext = createContext()
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null)
+  const [user, setUser] = useState(null) // Supabase auth user
+  const [userData, setUserData] = useState(null) // DB user row (with is_admin, etc.)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Get current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
+    const getSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      const authUser = session?.user ?? null
+      setUser(authUser)
       setLoading(false)
-    })
 
-    // Listen for auth changes
-    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
-      setUser(session?.user ?? null)
+      if (authUser) {
+        fetchUserData(authUser.id)
+      }
+    }
+
+    const fetchUserData = async (id) => {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', id)
+        .single()
+
+      if (!error) {
+        setUserData(data)
+      } else {
+        console.error('Nem tudtuk betölteni a felhasználói adatokat:', error.message)
+        setUserData(null)
+      }
+    }
+
+    getSession()
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      const authUser = session?.user ?? null
+      setUser(authUser)
+      if (authUser) {
+        fetchUserData(authUser.id)
+      } else {
+        setUserData(null)
+      }
     })
 
     return () => {
-      listener.subscription.unsubscribe()
+      listener?.subscription.unsubscribe()
     }
   }, [])
 
-  const login = async (email, password) => {
-    const { error, data } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) throw error
-    return data
-  }
-
-  const register = async (email, password) => {
-    const { error, data } = await supabase.auth.signUp({ email, password })
-    if (error) throw error
-    return data
-  }
-
-  const logout = async () => {
-    await supabase.auth.signOut()
-    setUser(null)
-  }
+  const login = (email, password) => supabase.auth.signInWithPassword({ email, password })
+  const register = (email, password) => supabase.auth.signUp({ email, password })
+  const logout = () => supabase.auth.signOut()
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, loading }}>
-      {children}
+    <AuthContext.Provider value={{ user, userData, login, register, logout }}>
+      {!loading && children}
     </AuthContext.Provider>
   )
 }
