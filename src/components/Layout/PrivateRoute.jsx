@@ -39,7 +39,7 @@ export default function PrivateRoute() {
         <Flex h={16} alignItems="center" justifyContent="space-between">
           <Box fontWeight="bold" display="flex" alignItems="center">
             <Image
-              src={userData?.is_admin ? 'public/orange_rectangle_transparent.png' : 'public/black_rectangle_transparent.png'}
+              src={userData?.is_admin ? 'orange_rectangle_transparent.png' : 'black_rectangle_transparent.png'}
               alt="YKB Logo"
               h="16"
               ml="4"

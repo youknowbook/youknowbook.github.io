@@ -1,18 +1,20 @@
 // src/components/Auth/ResetPassword.jsx
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../api/supabaseClient'
 import {
   Box,
+  Flex,
+  Heading,
+  Text,
   Input,
   Button,
   VStack,
-  Heading,
-  Text
+  Image,
 } from '@chakra-ui/react'
 
 export default function ResetPassword() {
-  const [ready, setReady] = useState(false)        // whether we have a valid recovery session
+  const [ready, setReady] = useState(false)
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
@@ -20,12 +22,9 @@ export default function ResetPassword() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    // Once createClient({ detectSessionInUrl: true }) runs,
-    // Supabase parses any recovery token from the URL into session storage.
-    // Now we just fetch that session:
     supabase.auth.getSession().then(({ data: { session }, error }) => {
       if (error || !session) {
-        setError('Leját vagy érvénytelen link.')
+        setError('Lejárt vagy érvénytelen link.')
       } else {
         setReady(true)
       }
@@ -34,63 +33,133 @@ export default function ResetPassword() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setError('')
-    setSuccess('')
+    setError(''); setSuccess('')
 
     if (!password || password !== confirmPassword) {
       setError('A jelszavaknak egyezniük kell és nem lehetnek üresek.')
       return
     }
 
-    // This will use the recovery session that was just established
     const { error: updateError } = await supabase.auth.updateUser({ password })
-
     if (updateError) {
       setError(updateError.message)
     } else {
-      setSuccess('A jelszó sikeresen megváltozott! Most már bejelentkezhetsz.')
+      setSuccess('A jelszó sikeresen megváltozott! Átirányítás bejelentkezéshez…')
       setTimeout(() => navigate('/login'), 2000)
     }
   }
 
-  // If we haven’t verified the session yet, show a spinner or message
   if (!ready) {
     return (
-      <Box maxW="md" mx="auto" mt="10" textAlign="center">
-        {error
-          ? <Text color="red.500">{error}</Text>
-          : <Text>Ellenőrízzük a link hitelességét...</Text>}
-      </Box>
+      <Flex
+        overflow="hidden"
+        minH="100vh"
+        align="center"
+        justify="center"
+        bg="linear(to-br, gray.50, blue.50)"
+        position="relative"
+      >
+        <Box bg="white" p={6} rounded="2xl" shadow="lg" textAlign="center">
+          {error
+            ? <Text color="red.500">{error}</Text>
+            : <Text>Ellenőrizzük a link hitelességét…</Text>}
+        </Box>
+      </Flex>
     )
   }
 
-  // Otherwise, show the reset form
   return (
-    <Box maxW="md" mx="auto" mt="10">
-      <Heading mb="6">Jelszó visszaállítás </Heading>
-
-      {error && <Text color="red.500" mb="4">{error}</Text>}
-      {success && <Text color="green.500" mb="4">{success}</Text>}
-
-      <form onSubmit={handleSubmit}>
-        <VStack spacing={4}>
-          <Input
-            placeholder="Új jelszó"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+    <Flex
+      overflow="hidden"
+      minH="100vh"
+      align="center"
+      justify="center"
+      bg="linear(to-br, gray.50, blue.50)"
+      position="relative"
+      _before={{
+        content: `""`,
+        display: { base: 'none', md: 'block' },
+        bgImage: `url(/orange_circle_transparent.png)`,
+        bgSize: 'cover',
+        bgPos: 'center',
+        opacity: 0.1,
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+      }}
+    >
+      {/* Mobile‐only full-screen stacked logos */}
+      <Box
+        display={{ base: 'flex', md: 'none' }}
+        position="absolute"
+        top="0"
+        left="0"
+        w="100vw"
+        h="100vh"
+        flexDir="column"
+        justify="space-between"
+        align="center"
+        zIndex={0}
+        pointerEvents="none"
+      >
+        {[0.3, 0.6, 0.9].map((opacity, i) => (
+          <Image
+            key={i}
+            src="/orange_circle_transparent.png"
+            boxSize="100vw"
+            objectFit="cover"
+            opacity={opacity}
           />
-          <Input
-            placeholder="Új jelszó újra"
-            type="password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-          />
-          <Button type="submit" colorScheme="blue" width="full">
-            Jelszó visszaállítás
-          </Button>
-        </VStack>
-      </form>
-    </Box>
+        ))}
+      </Box>
+
+      <Box
+        bg="white"
+        p={8}
+        rounded="2xl"
+        shadow="lg"
+        w={{ base: '90%', md: '400px' }}
+        zIndex={1}
+      >
+        <Heading mb={6} textAlign="center" color="gray.800">
+          Jelszó visszaállítás
+        </Heading>
+
+        {error && (
+          <Box bg="red.100" borderRadius="md" p={3} mb={4}>
+            <Text color="red.800" fontWeight="medium">⚠️ {error}</Text>
+          </Box>
+        )}
+        {success && (
+          <Box bg="green.100" borderRadius="md" p={3} mb={4}>
+            <Text color="green.800" fontWeight="medium">{success}</Text>
+          </Box>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <VStack spacing={4}>
+            <Input
+              placeholder="Új jelszó"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              focusBorderColor="blue.400"
+            />
+            <Input
+              placeholder="Új jelszó újra"
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              focusBorderColor="blue.400"
+            />
+            <Button type="submit" colorScheme="blue" width="full" size="lg">
+              Jelszó visszaállítás
+            </Button>
+          </VStack>
+        </form>
+      </Box>
+    </Flex>
   )
 }
