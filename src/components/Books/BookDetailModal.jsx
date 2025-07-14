@@ -34,6 +34,7 @@ export default function BookDetailModal({ book, isOpen, onClose }) {
           page_count,
           country,
           author_gender,
+          release_year,
           message,
           user_id,
           added_by,
@@ -136,17 +137,25 @@ export default function BookDetailModal({ book, isOpen, onClose }) {
               {details.page_count != null && (
                 <Text fontSize="sm">Oldalszám: {details.page_count}</Text>
               )}
+              {details.release_year != null && (
+                <Text fontSize="sm">Kiadás éve: {details.release_year}</Text> 
+              )}
               {details.country && (
                 <Text fontSize="sm">Ország: {details.country}</Text>
               )}
             </VStack>
           </HStack>
 
-          <HStack align="center" spacing={4} w="full">
-            <Avatar.Root size="sm" key="sm">
-                <Avatar.Fallback name={book.added_by} />
-                <Avatar.Image src={avatarUrl} />  
-            </Avatar.Root>
+          <HStack align="center" gap={2} w="full">
+            <VStack gap={0} align="center">
+              <Avatar.Root size="sm">
+                <Avatar.Fallback name={details.added_by} />
+                <Avatar.Image src={avatarUrl} />
+              </Avatar.Root>
+              <Text fontSize="sm" fontWeight="medium">
+                {details.added_by}
+              </Text>
+            </VStack>
             <Box
               bg="gray.100"
               p={3}

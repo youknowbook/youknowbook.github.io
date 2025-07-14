@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Flex, Heading, Text, Spinner, AspectRatio } from '@chakra-ui/react';
+import { Box, Flex, Heading, Text, Spinner, AspectRatio, useBreakpointValue } from '@chakra-ui/react';
 import { supabase } from '../api/supabaseClient';
 import { ComposableMap, Geographies, Geography, Marker } from 'react-simple-maps';
 import { scaleSequential } from 'd3-scale';
@@ -20,6 +20,14 @@ const Stats = () => {
   const [books, setBooks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [userColors, setUserColors] = useState({});
+  const [orderedBookIds, setOrderedBookIds] = useState([]);
+  //Books
+  const spineHeight = 200          // must match BookSpine’s height
+  const verticalMargin = 4         // m={1} → 4px top + bottom
+  const shelfGap = 2               // space between bottom of spine and shelf
+  const shelfThickness = 6         // how tall the shelf line is
+  const rowHeight = spineHeight + verticalMargin * 2
+  const cycleHeight = rowHeight + shelfGap + shelfThickness
 
   useEffect(() => {
     async function loadAll() {
@@ -49,6 +57,20 @@ const Stats = () => {
         .eq('user_id', user.id);
       if (ubErr) console.error(ubErr);
       else setUserColors(Object.fromEntries(ub.map(u => [u.book_id, u.mood_color])));
+
+      // 3a) fetch past meetings (where is_selected was true) so we know their read dates
+      const { data: pastMeetings = [], error: meetErr } = await supabase
+        .from('meetings')
+        .select('book_id, date')
+        .eq('is_active', false)
+        .order('date', { ascending: true });  // oldest → newest
+      if (meetErr) console.error('Failed to load past meetings', meetErr);
+
+      // 3b) build an array of book IDs in read order
+      const orderedIds = pastMeetings.map(m => m.book_id);
+
+      // now you have both `booksData` (all selected books) and `orderedIds`
+      setOrderedBookIds(orderedIds);
 
       // finally:
       setLoading(false);
@@ -86,6 +108,17 @@ const Stats = () => {
   const boxSize = 100;         // increased from 40 to 100 for larger covers
   const offset = 50;          // increased offset for larger boxes
 
+  const maxPages = books.length
+    ? Math.max(...books.map(b => b.page_count))
+    : 0;
+
+  const orderedBooks = [
+    ...orderedBookIds
+      .map(id => books.find(b => b.id === id))
+      .filter(Boolean),
+    ...books.filter(b => !orderedBookIds.includes(b.id))
+  ];
+
   // Enhanced BookSpine with intelligent title wrapping
   const BookSpine = ({ book, maxPages, moodColor  }) => {
     const widthPx = maxPages
@@ -95,7 +128,6 @@ const Stats = () => {
     const gap = 8;
     
     console.log('BookSpine debug:', book.id, 'widthPx:', widthPx, 'moodColor:', moodColor);
-
 
     // Shorten author name
     const nameParts = (book.author || '').split(' ');
@@ -305,8 +337,8 @@ const Stats = () => {
 
           {(() => {
             const years = timelineData.map(d => d.year);
-            const minYear = Math.min(...years) - 2;
-            const maxYear = Math.max(...years) + 2;
+            const minYear = Math.min(...years) - 10;
+            const maxYear = Math.max(...years) + 10;
             const range = maxYear - minYear;
             const dotGap = 4; // small offset from axis
 
@@ -333,8 +365,8 @@ const Stats = () => {
 
           {(() => {
             const years = timelineData.map(d => d.year);
-            const minYear = Math.min(...years) - 2;
-            const maxYear = Math.max(...years) + 2;
+            const minYear = Math.min(...years) - 10;
+            const maxYear = Math.max(...years) + 10;
             const range = maxYear - minYear;
             const coverHeight = 120;
             const gap = 20; // distance between axis and cover
@@ -443,24 +475,37 @@ const Stats = () => {
         </Flex>
       </Box>
 
-      {/* 4. Enhanced bookshelf */}
-      <Box>  
-        <Heading justifySelf="center" size="xl" mb={2}>A Könyvespolcunk</Heading>  
-        <Flex wrap="wrap" align="flex-end">  
-          {(() => {  
-            const maxPages = books.length  
-              ? Math.max(...books.map(b => b.page_count))  
-              : 0;  
-            return books.map((book, idx) => (  
-              <BookSpine  
-                key={`${book.id || idx}`}  
-                book={book}  
-                maxPages={maxPages}  
-                moodColor={userColors[book.id]}  
-              />  
-            ));  
-          })()}  
-        </Flex>  
+      {/* 4. Enhanced bookshelf with brown shelves and left-aligned rows */}
+      <Box>
+        <Heading justifySelf="center" size="xl" mb={4}>A Könyvespolcunk</Heading>
+        <Box
+          width="100%"
+          px={2}
+          py={-3}
+          backgroundPositionY={`${rowHeight + shelfGap}px`}
+          bgImage={`
+            repeating-linear-gradient(
+              to bottom,
+              transparent 0px,
+              transparent ${rowHeight + shelfGap}px,
+              #8B5E3C ${rowHeight + shelfGap}px,
+              #8B5E3C ${rowHeight + shelfGap + shelfThickness}px
+            )
+          `}
+          backgroundSize={`100% ${cycleHeight}px`}
+        >
+          <Flex wrap="wrap" justify="flex-start" align="flex-end">
+            {orderedBooks.map((book, idx) => (
+              <Box key={book.id || idx} flex="0 0 auto" m={1}>
+                <BookSpine
+                  book={book}
+                  maxPages={maxPages}
+                  moodColor={userColors[book.id]}
+                />
+              </Box>
+            ))}
+          </Flex>
+        </Box>
       </Box>
     </Box>
   );
