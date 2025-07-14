@@ -16,7 +16,10 @@ import {
   Menu,
   IconButton,
   Textarea,
-  Input
+  Input,
+  Wrap,
+  WrapItem,
+  Group, 
 } from '@chakra-ui/react'
 import {
   FaCalendarAlt,
@@ -26,12 +29,15 @@ import {
   FaEdit,
   FaTrash,
   FaArrowLeft,
-  FaArrowRight
+  FaArrowRight,
+  FaCheck,
+  FaTimes
 } from 'react-icons/fa'
 import { createPortal } from 'react-dom'
 import { supabase } from '../api/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import Voting from '../components/Dashboard/Voting'
+import MeetingTime from '../components/Dashboard/MeetingTime'
 
 // Helper to average an array of hex colors
 function averageHex(colors) {
@@ -54,15 +60,27 @@ function averageHex(colors) {
 
 // Build CSS background based on combination method
 function buildBackground(colors, method, ownColor) {
-  if (!colors.length || method === 'Colorless') return '#ffffff'
+  if (!colors.length || method === 'Színtelen') return '#ffffff'
   if (method === 'Saját szín') return ownColor || '#ffffff'
-  if (method === 'Kevert szín') return averageHex(colors)
+  if (method === 'Kevert') return averageHex(colors)
   if (method === 'Körkörös') return `radial-gradient(circle, ${colors.join(',')})`
-  const stripeSize = 100 / colors.length
-  const stops = colors
-    .map((c, i) => `${c} ${i * stripeSize}% ${(i + 1) * stripeSize}%`)
-    .join(', ')
-  return `repeating-linear-gradient(90deg, ${stops})`
+  if (method === 'Sávok') {
+    // at least 10 stripes, blending between each adjacent color
+    const repeats = 10;
+    const size = 100 / repeats;
+    const stops = Array.from({ length: repeats }, (_, i) => {
+      const c1 = colors[i % colors.length];
+      const c2 = colors[(i + 1) % colors.length];
+      const start = i * size;
+      const mid = start + size / 2;
+      const end = start + size;
+      return `${c1} ${start}%, ${c2} ${mid}%, ${c2} ${end}%`;
+    }).join(', ');
+    return `linear-gradient(90deg, ${stops})`;
+  }
+
+  // fallback
+  return '#ffffff'
 }
 
 export default function Dashboard() {
@@ -93,13 +111,33 @@ export default function Dashboard() {
   const qRef = useRef()
   const [allColors, setAllColors] = useState([])
   const [ownColor, setOwnColor] = useState(null)
-  const [method, setMethod] = useState('Stack')
+  const [method, setMethod] = useState('Sávok')
   const [attendees, setAttendees] = useState([])
   const [isAttending, setIsAttending] = useState(false)
   const [showAtt, setShowAtt] = useState(false)
   const [showVoting, setShowVoting] = useState(false)
   const [openPoll, setOpenPoll] = useState(false) 
+  const [showMeetingTime, setShowMeetingTime] = useState(false)
 
+  const today = new Date()
+  const defaultYear = today.getFullYear()
+  const defaultMonth = today.getMonth() + 1
+
+  const [openRoundId, setOpenRoundId] = useState(null)
+
+  useEffect(() => {
+    // grab the single open date‐selection round, if any
+    supabase
+      .from('date_selection_rounds')
+      .select('id')
+      .eq('status', 'open')
+      .single()
+      .then(({ data, error }) => {
+        if (!error && data?.id) {
+          setOpenRoundId(data.id)
+        }
+      })
+  }, [])
 
   // Helper to parse stored notes
   const parseNotes = (raw) =>
@@ -139,74 +177,105 @@ export default function Dashboard() {
 
   // Load details (questions, colors, attendees) when `meeting` changes
   useEffect(() => {
-    if (!user) return
-    // check admin
-    supabase
-      .from('users')
-      .select('is_admin')
-      .eq('id', user.id)
-      .single()
-      .then(({ data }) => setIsAdmin(data?.is_admin || false))
+    if (!user || !meeting || meeting.placeholder) return;
 
-    // skip placeholder
-    if (!meeting || meeting.placeholder) return
-
-    ;(async () => {
-      // Questions
-      const raw = parseNotes(meeting.notes)
-      const uids = [...new Set(raw.map((q) => q.user_id))].filter(Boolean)
-      const nameMap = {}
+    (async () => {
+      // --- Questions ---
+      const raw = parseNotes(meeting.notes);
+      const uids = [...new Set(raw.map((q) => q.user_id))].filter(Boolean);
+      const nameMap = {};
       if (uids.length) {
         const { data: users } = await supabase
           .from('users')
-          .select('id,display_name')
-          .in('id', uids)
+          .select('id, display_name')
+          .in('id', uids);
         users.forEach((u) => {
-          nameMap[u.id] = u.display_name
-        })
+          nameMap[u.id] = u.display_name;
+        });
       }
       setQuestions(
         raw.map((q) => ({
           ...q,
-          user_name: q.user_name || nameMap[q.user_id] || 'Unknown'
+          user_name: q.user_name || nameMap[q.user_id] || 'Unknown',
         }))
-      )
+      );
 
-      // Colors
-      const { data: ub } = await supabase
+      // --- Public colors for stripes / gradients / mix ---
+      const { data: publicBooks, error: pubErr } = await supabase
+        .from('user_books_public')
+        .select('user_id, mood_color')
+        .eq('book_id', meeting.books.id);
+      if (pubErr) {
+        console.error('Failed to load public mood colors', pubErr);
+      }
+      // Map and filter out any pure white entries
+      const all = (publicBooks || [])
+        .map(r => {
+          const raw = r.mood_color.trim().toLowerCase();
+          return raw.startsWith('#') ? raw : `#${raw}`;
+        })
+        .filter(c => c !== '#ffffff');
+
+      console.log('allColors (filtered):', all);
+      setAllColors(all);
+
+      // --- Your own color ---
+      const mine = publicBooks?.find((r) => r.user_id === user.id);
+      const own = mine
+        ? mine.mood_color.startsWith('#')
+          ? mine.mood_color
+          : `#${mine.mood_color}`
+        : null;
+      console.log('ownColor:', own);
+      setOwnColor(own);
+
+      // --- Your saved display setting ---
+      const {
+        data: myRow,
+        error: myErr,
+      } = await supabase
         .from('user_books')
-        .select('user_id,mood_color')
-        .eq('book_id', meeting.books.id)
-      const cols = (ub || []).map((r) =>
-        r.mood_color.startsWith('#') ? r.mood_color : `#${r.mood_color}`
-      )
-      setAllColors(cols)
-      const meRec = ub?.find((r) => r.user_id === user.id)
-      setOwnColor(
-        meRec
-          ? meRec.mood_color.startsWith('#')
-            ? meRec.mood_color
-            : `#${meRec.mood_color}`
-          : null
-      )
+        .select('mood_color_setting')
+        .match({ user_id: user.id, book_id: meeting.books.id })
+        .single();
+      if (myErr && myErr.code !== 'PGRST116') {
+        console.error('Failed to load your color setting', myErr);
+      }
+      if (myRow?.mood_color_setting) {
+        setMethod(myRow.mood_color_setting);
+      }
 
-      // Attendees
+      // --- Attendees ---
       const aIds = Array.isArray(meeting.attendees)
         ? meeting.attendees
-        : []
+        : [];
       if (aIds.length) {
         const { data: us } = await supabase
           .from('users')
-          .select('id,display_name,profile_picture')
-          .in('id', aIds)
-        setAttendees(us)
-        setIsAttending(aIds.includes(user.id))
+          .select('id, display_name, profile_picture')
+          .in('id', aIds);
+        setAttendees(us);
+        setIsAttending(aIds.includes(user.id));
       } else {
-        setAttendees([])
-        setIsAttending(false)
+        setAttendees([]);
+        setIsAttending(false);
       }
-    })()
-  }, [user, meeting])
+    })();
+  }, [user, meeting]);
+
+  // Split Avatars
+  const partition = (arr, max) => {
+    const items = []
+    const overflow = []
+    for (const item of arr) {
+      if (items.length < max) items.push(item)
+      else overflow.push(item)
+    }
+    return { items, overflow }
+  }
+
+  const maxAvatars = meeting.is_active ? 3 : 8
+  const { items, overflow } = partition(attendees, maxAvatars)
 
   // Navigation
   const prev = () =>
@@ -225,10 +294,14 @@ export default function Dashboard() {
     location = meeting.location
   }
 
-  // Background for cover
-  const bg = meeting.placeholder
-    ? '#ffffff'
-    : buildBackground(allColors, method, ownColor)
+  // in your render, *before* the JSX:
+  const rawBg = buildBackground(allColors, method, ownColor)
+  // detect if it’s a gradient string
+  const isGradient = rawBg.startsWith('linear-') 
+                  || rawBg.startsWith('radial-') 
+                  || rawBg.includes('gradient(')
+
+  console.log(`Dashboard bg — method: ${method}; rawBg: ${rawBg}; gradientMode: ${isGradient}`)
 
   // Question‐panel handlers
   const startEdit = (q) => {
@@ -420,19 +493,53 @@ export default function Dashboard() {
   if (showVoting) {
     return (
       <Box position="relative" minH="100vh" p="6">
-        <IconButton
-          icon={<FaArrowLeft />}
-          aria-label="Vissza a Dashboardra"
-          onClick={() => setShowVoting(false)}
-          position="absolute"
-          top="4"
-          left="4"
-          variant="ghost"
-          size="lg"
-        />
         <Voting onClose={() => setShowVoting(false)} />
       </Box>
     )
+  }
+
+  if (showMeetingTime) {
+    return (
+      <Box position="relative" minH="100vh" p="6">
+        <IconButton
+          aria-label="Bezár"
+          onClick={() => setShowMeetingTime(false)}
+          position="absolute"
+          top="4"
+          right="4"
+          variant="ghost"
+          size="lg"
+        >
+          <FaTimes />
+        </IconButton>
+        <Heading size="lg" textAlign="center" mb={6}>
+          Jelöld meg a számodra megfelelő napokat
+        </Heading>
+        <MeetingTime
+          year={defaultYear}
+          month={defaultMonth}
+          roundId={openRoundId}
+          initialParticipants={{}}
+          onChange={(updated) => {
+            console.log('Calendar RSVPs:', updated)
+          }}
+        />
+      </Box>
+    )
+  }
+
+  async function onChangeMode(newMode) {
+    setMethod(newMode)
+
+    const { error } = await supabase
+      .from('user_books')
+      .update({ mood_color_setting: newMode })
+      .match({
+        user_id: user.id,
+        book_id: meeting.books.id
+      })
+
+    if (error) console.error('Could not save color setting', error)
   }
 
   return (
@@ -440,7 +547,10 @@ export default function Dashboard() {
       {/* Cover + arrows */}
       <Box w="full" maxW="md" position="relative">
         <Box
-          bg={bg}
+          // only feed pure gradients into backgroundImage
+          backgroundImage={isGradient ? rawBg : undefined}
+          // feed solid colors (#xxxxxx) into bg
+          bg={!isGradient ? rawBg : undefined}
           p="4"
           borderRadius="md"
           boxShadow="md"
@@ -482,7 +592,7 @@ export default function Dashboard() {
                   Szavazás
                 </Button>
               ) : (
-                <Text>No book yet</Text>
+                <Text>Nincs még könyv</Text>
               )}
             </Box>
           ) : (
@@ -497,35 +607,26 @@ export default function Dashboard() {
           {!meeting.placeholder && allColors.length > 0 && (
             <Menu.Root>
               <Menu.Trigger asChild>
-                <Circle
-                  size="36px"
-                  bg="white"
-                  pos="absolute"
-                  top="4"
-                  right="4"
-                  cursor="pointer"
-                >
+                <Circle size="36px" bg="white" pos="absolute" top="4" right="4" cursor="pointer">
                   <FaChevronDown />
                 </Circle>
               </Menu.Trigger>
               <Portal>
                 <Menu.Positioner>
                   <Menu.Content>
-                    {['Sávok', 'Körkörös', 'Kevert', 'Színtelen'].map(
-                      (opt) => (
-                        <Menu.Item
-                          key={opt}
-                          onClick={() => setMethod(opt)}
-                        >
-                          {opt}
-                        </Menu.Item>
-                      )
-                    )}
+                    {['Sávok', 'Körkörös', 'Kevert', 'Színtelen'].map(opt => (
+                      <Menu.Item
+                        key={opt}
+                        onClick={() => onChangeMode(opt)}
+                        icon={method === opt ? <FaCheck /> : undefined}
+                      >
+                        {opt}
+                      </Menu.Item>
+                    ))}
                     {ownColor && (
                       <Menu.Item
-                        onClick={() =>
-                          setMethod('Saját szín')
-                        }
+                        onClick={() => onChangeMode('Saját szín')}
+                        icon={method === 'Saját szín' ? <FaCheck /> : undefined}
                       >
                         Saját szín
                       </Menu.Item>
@@ -536,17 +637,19 @@ export default function Dashboard() {
             </Menu.Root>
           )}
 
-          <Circle
-            size="36px"
-            bg="white"
-            pos="absolute"
-            bottom="4"
-            right="4"
-            cursor="pointer"
-            onClick={() => setShowQ((v) => !v)}
-          >
-            <FaQuestionCircle size={24} />
-          </Circle>
+          {!meeting.placeholder && (
+            <Circle
+              size="36px"
+              bg="white"
+              pos="absolute"
+              bottom="4"
+              right="4"
+              cursor="pointer"
+              onClick={() => setShowQ(v => !v)}
+            >
+              <FaQuestionCircle size="24" />
+            </Circle>
+          )}
           {showQ &&
             createPortal(
               <Box
@@ -587,138 +690,115 @@ export default function Dashboard() {
       </Box>
 
       {/* Details */}
-      <Box
-        w="full"
-        maxW="md"
-        bg="white"
-        boxShadow="md"
-        borderRadius="md"
-        p="6"
-      >
+      <Box justifyItems="center" w="full" maxW="md" bg="white" boxShadow="md" borderRadius="md" p="6">
         <VStack align="start" spacing="4">
           {meeting.placeholder ? (
-            <Text
-              textAlign="center"
-              w="full"
-              py="8"
-            >
-              No meeting yet
-            </Text>
+            // No upcoming meeting
+            <Box textAlign="center" py={8}>
+              <Button
+                size="md"
+                colorScheme="teal"
+                leftIcon={<FaCalendarAlt />}
+                onClick={() => setShowMeetingTime(true)}
+                px={6}
+                py={4}
+              >
+                Időpont kiválasztása
+              </Button>
+            </Box>
           ) : (
+            // Real meeting
             <>
-              <Heading size="md">
-                {book.title}
-              </Heading>
-              <Text>
-                <strong>Dátum:</strong> {date}
-              </Text>
-              <Text>
-                <strong>Idő:</strong> {time.slice(
-                  0,
-                  5
-                )}
-              </Text>
-              <Text>
-                <strong>Helyszín:</strong>{' '}
-                {location}
-              </Text>
+              <Heading size="xl">{book.title}</Heading>
+              <Text><strong>Dátum:</strong> {date}</Text>
+              <Text><strong>Idő:</strong> {time.slice(0, 5)}</Text>
+              <Text><strong>Helyszín:</strong> {location}</Text>
 
-              {meeting.is_active ? (
+              {meeting.is_active && (
+                // Upcoming meeting UI
                 <>
-                  <HStack spacing="3" pt="4">
-                    <Button
-                      leftIcon={<FaCalendarAlt />}
-                      as={Link}
-                      href={gc.toString()}
-                      isExternal
-                    >
-                      Hozzáadás a naptáradhoz
-                    </Button>
-                    <Button
-                      leftIcon={<FaMapMarkerAlt />}
-                      as={Link}
-                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                        location
-                      )}`}
-                      isExternal
-                    >
-                      Mutasd a térképen
-                    </Button>
-                  </HStack>
+                  {/* Calendar & Map */}
+                  <Wrap spacing="3" pt="4" justify="center">
+                    <WrapItem>
+                      <Button
+                        leftIcon={<FaCalendarAlt />}
+                        as={Link}
+                        href={gc.toString()}
+                        isExternal
+                        flex="1"
+                        minW="140px"
+                      >
+                        Hozzáadás a naptáradhoz
+                      </Button>
+                    </WrapItem>
+                    <WrapItem>
+                      <Button
+                        leftIcon={<FaMapMarkerAlt />}
+                        as={Link}
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`}
+                        isExternal
+                        flex="1"
+                        minW="140px"
+                      >
+                        Mutasd a térképen
+                      </Button>
+                    </WrapItem>
+                  </Wrap>
 
-                  <HStack
-                    spacing="3"
-                    pt="4"
-                    align="center"
-                  >
-                    <Button
-                      colorScheme={
-                        isAttending
-                          ? 'green'
-                          : 'gray'
-                      }
-                      onClick={toggleAttend}
-                    >
-                      {isAttending
-                        ? 'Mégsem jövök'
-                        : 'Jövök'}
-                    </Button>
+                  {/* RSVP + Avatars with overflow */}
+                  <Wrap spacing="3" pt="4" align="center">
+                    <WrapItem>
+                      <Button
+                        colorScheme={isAttending ? 'green' : 'gray'}
+                        onClick={toggleAttend}
+                        minW="120px"
+                      >
+                        {isAttending ? 'Mégsem jövök' : 'Jövök'}
+                      </Button>
+                    </WrapItem>
 
-                    <AvatarGroup spacing="-3">
-                      {attendees
-                        .slice(0, 3)
-                        .map((u) => (
-                          <Avatar.Root
-                            size="sm"
-                            key={u.id}
-                          >
-                            <Avatar.Fallback
-                              name={u.display_name}
-                            />
-                            <Avatar.Image
-                              src={u.profile_picture}
-                            />
-                          </Avatar.Root>
-                        ))}
-                      {attendees.length > 3 && (
-                        <Avatar.Root size="sm">
-                          <Avatar.Fallback
-                            name={`+${attendees.length -
-                              3}`}
-                          />
+                    <WrapItem onClick={() => setShowAtt(true)}>
+                      <Menu.Root>
+                        <Menu.Trigger asChild>
+                          <AvatarGroup size="sm" spacing="-3" cursor="pointer">
+                            {items.map(u => (
+                              <Avatar.Root key={u.id}>
+                                <Avatar.Fallback name={u.display_name} />
+                                <Avatar.Image src={u.profile_picture} />
+                              </Avatar.Root>
+                            ))}
+                            {overflow.length > 0 && (
+                              <Avatar.Root variant="outline">
+                                <Avatar.Fallback>+{overflow.length}</Avatar.Fallback>
+                              </Avatar.Root>
+                            )}
+                          </AvatarGroup>
+                        </Menu.Trigger>
+                      </Menu.Root>
+                    </WrapItem>
+                  </Wrap>
+                </>
+              )}
+
+              {!meeting.is_active && (
+                // Past meeting avatars with overflow
+                <Menu.Root>
+                  <Menu.Trigger asChild>
+                    <AvatarGroup spacing="-3" mt="4" cursor="pointer" onClick={() => setShowAtt(true)}>
+                      {items.map(u => (
+                        <Avatar.Root size="sm" key={u.id}>
+                          <Avatar.Fallback name={u.display_name} />
+                          <Avatar.Image src={u.profile_picture} />
+                        </Avatar.Root>
+                      ))}
+                      {overflow.length > 0 && (
+                        <Avatar.Root>
+                          <Avatar.Fallback>+{overflow.length}</Avatar.Fallback>
                         </Avatar.Root>
                       )}
                     </AvatarGroup>
-
-                    <Button
-                      variant="link"
-                      onClick={() => setShowAtt(true)}
-                    >
-                      Akik jönnek
-                    </Button>
-                  </HStack>
-                </>
-              ) : (
-                <Box
-                  display="flex"
-                  flexWrap="wrap"
-                  pt="4"
-                  gap="3"
-                >
-                  {attendees.map((u) => (
-                    <Avatar.Root
-                      size="sm"
-                      key={u.id}
-                    >
-                      <Avatar.Fallback
-                        name={u.display_name}
-                      />
-                      <Avatar.Image
-                        src={u.profile_picture}
-                      />
-                    </Avatar.Root>
-                  ))}
-                </Box>
+                  </Menu.Trigger>
+                </Menu.Root>
               )}
             </>
           )}
@@ -744,50 +824,30 @@ export default function Dashboard() {
               w="90%"
               maxW="xs"
               p="6"
+              maxH="80vh"
+              overflowY="auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <VStack
-                align="start"
-                spacing="4"
-              >
-                <HStack
-                  justify="space-between"
-                  w="full"
-                >
+              <VStack align="start" spacing="4">
+                <HStack justify="space-between" w="full">
                   <Heading size="sm">
                     Résztvevők ({attendees.length})
                   </Heading>
-                  <Button
-                    size="sm"
-                    onClick={() => setShowAtt(false)}
-                  >
+                  <Button size="sm" onClick={() => setShowAtt(false)}>
                     Bezárás
                   </Button>
                 </HStack>
-                <AvatarGroup spacing="4">
+                <VStack align="stretch" spacing="3" pt="2">
                   {attendees.map((u) => (
-                    <VStack
-                      key={u.id}
-                      spacing="1"
-                      align="center"
-                    >
+                    <HStack key={u.id} spacing="3">
                       <Avatar.Root size="md">
-                        <Avatar.Fallback
-                          name={u.display_name}
-                        />
-                        <Avatar.Image
-                          src={u.profile_picture}
-                        />
+                        <Avatar.Fallback name={u.display_name} />
+                        <Avatar.Image src={u.profile_picture} />
                       </Avatar.Root>
-                      <Text
-                        fontSize="sm"
-                        noOfLines={1}
-                      >
-                        {u.display_name}
-                      </Text>
-                    </VStack>
+                      <Text fontSize="md">{u.display_name}</Text>
+                    </HStack>
                   ))}
-                </AvatarGroup>
+                </VStack>
               </VStack>
             </Box>
           </Box>,

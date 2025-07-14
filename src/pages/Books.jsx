@@ -48,6 +48,7 @@ export default function Books() {
   const [detailModalBook, setDetailModalBook] = useState(null)
   const [viewMode, setViewMode] = useState('list')
   const searchRef = useRef()
+  const [readings, setReadings] = useState([]);
 
   // Filters + sorting state
   const [genreFilter,   setGenreFilter]   = useState([])
@@ -98,6 +99,33 @@ export default function Books() {
     if (error) console.error(error)
     else setBooks(data)
   }
+
+  // Fetch the readings
+  const fetchReadings = async () => {
+    const { data, error } = await supabase
+      .from('meetings')
+      .select(`
+        date,
+        books (
+          id, title, author, added_by,
+          cover_url, genre, country,
+          author_gender, release_year, page_count
+        )
+      `)
+      .order('date', { ascending: false });  // newest first
+
+    if (error) {
+      console.error('Failed to load past meetings', error);
+    } else {
+      setReadings(data);
+    }
+  };
+
+  useEffect(() => {
+    if (user) {
+      fetchReadings();
+    }
+  }, [user]);
 
   // fetch user_books and normalize mood_color → always “#rrggbb”
   const fetchMeta = async () => {
@@ -260,7 +288,7 @@ export default function Books() {
         <Tabs.Content value="readings">
           {viewMode === 'list' ? (
             <VStack spacing={3} align="stretch">
-              {books.filter(b => b.is_selected).map(book => {
+              {readings.map(({ date, books: book }) => {
                 const meta = userMeta[book.id] || {}
                 return (
                   <Box
@@ -310,7 +338,7 @@ export default function Books() {
                 rowGap="4"
                 justifyItems="center"
               >
-                {books.filter(b => b.is_selected).map(book => {
+                {readings.map(({ date, books: book }) => {
                   const meta = userMeta[book.id] || {}
                   return (
                     <Box
@@ -775,63 +803,61 @@ export default function Books() {
                       </Text>
                     </Box>
                   </Flex>
-                  <Stack direction={{ base: 'column', md: 'row' }} spacing={2} flex="0">
-                    <Button
-                      size="xs"
-                      onClick={e => {
-                        e.stopPropagation()
-                        setEditBook(book)
-                        setAddModalOpen(true)
-                      }}
-                    >
-                      Szerkeszt
-                    </Button>
+                  {(book.added_by === user.user_metadata.display_name || isAdmin) && (
+                    <Stack direction={{ base: 'column', md: 'row' }} spacing={2} flex="0">
+                      <Button
+                        size="xs"
+                        onClick={e => {
+                          e.stopPropagation()
+                          setEditBook(book)
+                          setAddModalOpen(true)
+                        }}
+                      >
+                        Szerkeszt
+                      </Button>
 
-                    <Popover.Root>
-                      <Popover.Trigger asChild>
-                        <Button
-                          size="xs"
-                          colorScheme="red"
-                          onClick={e => e.stopPropagation()}
-                        >
-                          Töröl
-                        </Button>
-                      </Popover.Trigger>
-                      <Portal>
-                        <Popover.Positioner>
-                          <Popover.Content bg="red.50" p={4} borderRadius="md" w="240px">
-                            <Popover.Body>
-                              <Popover.Title
-                                fontSize="md"
-                                fontWeight="bold"
-                                color="red.800"
-                              >
-                                Törlés megerősítése
-                              </Popover.Title>
-                              <Text fontSize="sm" color="red.700" my={2}>
-                                Biztosan törölni szeretnéd ezt a könyvet?
-                              </Text>
-                              <HStack justify="flex-end" spacing={2}>
-                                <Popover.CloseTrigger asChild>
-                                  <Button size="xs">Vissza</Button>
-                                </Popover.CloseTrigger>
-                                <Button
-                                  size="xs"
-                                  colorScheme="red"
-                                  onClick={async e => {
-                                    e.stopPropagation()
-                                    await handleDelete(book.id)
-                                  }}
-                                >
-                                  Törlés
-                                </Button>
-                              </HStack>
-                            </Popover.Body>
-                          </Popover.Content>
-                        </Popover.Positioner>
-                      </Portal>
-                    </Popover.Root>
-                  </Stack>
+                      <Popover.Root>
+                        <Popover.Trigger asChild>
+                          <Button
+                            size="xs"
+                            colorScheme="red"
+                            onClick={e => e.stopPropagation()}
+                          >
+                            Töröl
+                          </Button>
+                        </Popover.Trigger>
+                        <Portal>
+                          <Popover.Positioner>
+                            <Popover.Content bg="red.50" p={4} borderRadius="md" w="240px">
+                              <Popover.Body>
+                                <Popover.Title fontSize="md" fontWeight="bold" color="red.800">
+                                  Törlés megerősítése
+                                </Popover.Title>
+                                <Text fontSize="sm" color="red.700" my={2}>
+                                  Biztosan törölni szeretnéd ezt a könyvet?
+                                </Text>
+                                <HStack justify="flex-end" spacing={2}>
+                                  <Popover.CloseTrigger asChild>
+                                    <Button size="xs">Vissza</Button>
+                                  </Popover.CloseTrigger>
+                                  <Button
+                                    size="xs"
+                                    colorScheme="red"
+                                    onClick={async e => {
+                                      e.stopPropagation()
+                                      await handleDelete(book.id)
+                                    }}
+                                  >
+                                    Törlés
+                                  </Button>
+                                </HStack>
+                              </Popover.Body>
+                            </Popover.Content>
+                          </Popover.Positioner>
+                        </Portal>
+                      </Popover.Root>
+                    </Stack>
+                  )}
                 </Flex>
               </Box>
             ))}

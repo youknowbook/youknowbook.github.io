@@ -9,7 +9,10 @@ import {
   Heading,
   Separator,
   Flex,
-  SimpleGrid
+  SimpleGrid,
+  Avatar,
+  AvatarFallback,
+  AspectRatio 
 } from '@chakra-ui/react'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../api/supabaseClient'
@@ -74,19 +77,45 @@ export default function Profile() {
 
   // Add a favorite book (with cover)
   const handleAddBook = book => {
-    if (favouriteBooks.length >= 4) return
-    const simplified = { /* ...same as before... */ }
-    if (!favouriteBooks.some(b => b.key === simplified.key)) {
-      setFavouriteBooks(prev => {
-        const next = [...prev, simplified]
-        if (next.length === 4) {
-          setMaxReachedFeedback(true)
-          setTimeout(() => setMaxReachedFeedback(false), 3000)
-        }
-        return next
-      })
-    }
-}
+    if (favouriteBooks.length >= 4) return;
+
+    console.log("📚 Book selected:", book);
+    const simplified = {
+      // if you use Google Books API, `book.id` is the unique key
+      key: book.key || book.id || "",
+
+      // title often lives at book.title or book.volumeInfo.title
+      title:
+        book.title ||
+        book.volumeInfo?.title ||
+        "No title available",
+
+      // authors is an array; join into a string (or pick the first one)
+      author:
+        book.author ||
+        (Array.isArray(book.volumeInfo?.authors)
+          ? book.volumeInfo.authors.join(", ")
+          : "Unknown author"),
+
+      // thumbnail is under volumeInfo.imageLinks
+      cover:
+        book.cover_url ||
+        book.volumeInfo?.imageLinks?.thumbnail ||
+        ""
+    };
+
+    // prevent duplicates
+    if (favouriteBooks.some(b => b.key === simplified.key)) return;
+
+    setFavouriteBooks(prev => {
+      const next = [...prev, simplified];
+      if (next.length === 4) {
+        setMaxReachedFeedback(true);
+        setTimeout(() => setMaxReachedFeedback(false), 3000);
+      }
+      return next;
+    });
+  };
 
   const handleRemoveBook = target => {
     setFavouriteBooks(prev => prev.filter(b => b.key !== target.key))
@@ -125,39 +154,57 @@ export default function Profile() {
       <Heading mb={6}>A profilom</Heading>
 
       <Flex gap={6} alignItems="center">
-        <Box position="relative" boxSize={{base: "40%", sm: "150px"}} flexShrink={0}>
-          <Image
-            src={
-              profilePic ||
-              'https://axgruqqfgmuvrhdvcgwj.supabase.co/storage/v1/object/public/book-covers/default-avatar-icon-of-social-media-user-vector.jpg'
-            }
-            alt="Profile"
-            boxSize="100%"
-            objectFit="cover"
-            borderRadius="md"
-          />
           <Box
-            position="absolute"
-            bottom={0}
-            w="100%"
-            bg="blackAlpha.600"
-            color="white"
-            textAlign="center"
-            fontSize="sm"
-            py={1}
+            position="relative"
+            flexShrink={0}
             cursor="pointer"
             onClick={() => fileInputRef.current?.click()}
           >
-            Profilkép feltöltése
+            <AspectRatio ratio={1} w={{ base: '120px', sm: '150px' }}>
+              {profilePic ? (
+                <Image
+                  src={profilePic}
+                  alt="Profile"
+                  objectFit="cover"
+                  borderRadius="md"
+                />
+              ) : (
+                <Box
+                  bg="gray.200"
+                  borderRadius="md"
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <Text fontSize={{ base: '3xl', sm: '5xl' }} fontWeight="bold">
+                    {displayName?.charAt(0).toUpperCase()}
+                  </Text>
+                </Box>
+              )}
+            </AspectRatio>
+
+            <Box
+              position="absolute"
+              bottom={0}
+              w="100%"
+              bg="blackAlpha.600"
+              color="white"
+              textAlign="center"
+              fontSize="sm"
+              py={2}
+              borderBottomRadius="md"
+            >
+              Töltsd fel a profilképed!
+            </Box>
+
+            <input
+              type="file"
+              accept="image/*"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              onChange={handleProfilePicUpload}
+            />
           </Box>
-          <input
-            type="file"
-            accept="image/*"
-            ref={fileInputRef}
-            style={{ display: 'none' }}
-            onChange={handleProfilePicUpload}
-          />
-        </Box>
 
         <VStack align="start" spacing={2} flexGrow={1}>
           <Text>A nevem:</Text>
