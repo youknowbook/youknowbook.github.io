@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { v4 as uuidv4 } from 'uuid'
 import {
   Box,
@@ -20,6 +20,7 @@ import {
   Wrap,
   WrapItem,
   Group, 
+  Flex
 } from '@chakra-ui/react'
 import {
   FaCalendarAlt,
@@ -124,6 +125,8 @@ export default function Dashboard() {
   const defaultMonth = today.getMonth() + 1
 
   const [openRoundId, setOpenRoundId] = useState(null)
+  const [latestWinnerId, setLatestWinnerId] = useState(null)
+  const [winnerBook,       setWinnerBook]   = useState(null)
 
   useEffect(() => {
     // grab the single open date‐selection round, if any
@@ -263,6 +266,38 @@ export default function Dashboard() {
     })();
   }, [user, meeting]);
 
+  //Load winner
+  useEffect(() => {
+    async function loadLatestWinner() {
+      const { data, error } = await supabase
+        .from('polls')
+        .select('winner')
+        .eq('status', 'complete')
+        .order('round', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (!error && data?.winner && data.winner !== 'next round') {
+        setLatestWinnerId(data.winner)
+      }
+    }
+    loadLatestWinner()
+  }, [])
+
+  useEffect(() => {
+    if (!latestWinnerId) {
+      setWinnerBook(null)
+      return
+    }
+    supabase
+      .from('books')
+      .select('cover_url, title')
+      .eq('id', latestWinnerId)
+      .single()
+      .then(({ data, error }) => {
+        if (!error && data) setWinnerBook(data)
+      })
+  }, [latestWinnerId])
+
   // Split Avatars
   const partition = (arr, max) => {
     const items = []
@@ -395,6 +430,17 @@ export default function Dashboard() {
     }
   }
 
+  // derive the last meeting by date
+  const lastMeeting = useMemo(() => {
+    if (!meetings.length) return null;
+    return [...meetings]
+      .filter(m => !m.placeholder)                            // ignore placeholder if you appended one
+      .sort((a, b) => new Date(b.date) - new Date(a.date))[0]; // newest first
+  }, [meetings]);
+
+  // pull out its attendees array
+  const lastAttendees = lastMeeting?.attendees || [];
+
   // Google Calendar link (only for real meetings)
   let gc
   if (!meeting.placeholder) {
@@ -405,7 +451,7 @@ export default function Dashboard() {
       String(hour).padStart(2, '0') +
       String(minute).padStart(2, '0') +
       '00'
-    const totalMins = hour * 60 + minute + 90
+    const totalMins = hour * 60 + minute + 120
     const endH = String(Math.floor(totalMins / 60) % 24).padStart(
       2,
       '0'
@@ -437,7 +483,9 @@ export default function Dashboard() {
       boxShadow="2xl"
       borderRadius="md"
       zIndex={1000}
-      w="320px"
+      w={{base:"340px", sm:"480px"}}
+      maxH="80vh" 
+      overflowY="auto"
       onClick={(e) => e.stopPropagation()}
     >
       <Heading size="md" mb="4">
@@ -513,11 +561,9 @@ export default function Dashboard() {
           <FaTimes />
         </IconButton>
         <Heading size="lg" textAlign="center" mb={6}>
-          Jelöld meg a számodra megfelelő napokat
+          Jelöld meg a számodra megfelelő napokat 18:30 - 20:30 között!
         </Heading>
         <MeetingTime
-          year={defaultYear}
-          month={defaultMonth}
           roundId={openRoundId}
           initialParticipants={{}}
           onChange={(updated) => {
@@ -584,15 +630,28 @@ export default function Dashboard() {
               borderRadius="md"
             >
               {openPoll ? (
-                <Button
-                  colorScheme="teal"
-                  size="lg"
-                  onClick={() => setShowVoting(true)}
-                >
-                  Szavazás
-                </Button>
+                // still in voting
+                lastAttendees.includes(user.id) ? (
+                  <Button colorScheme="teal" size="lg" onClick={() => setShowVoting(true)}>
+                    Szavazás
+                  </Button>
+                ) : (
+                  <Text>Nincs még könyv kiválasztva.</Text>
+                )
+              ) : latestWinnerId && winnerBook ? (
+                // no poll open, but we have a winner → show its cover
+                <VStack spacing={2}>
+                  <Image
+                    src={winnerBook.cover_url}
+                    boxSize="300px"
+                    objectFit="cover"
+                    borderRadius="md"
+                    alt={winnerBook.title}
+                  />
+                </VStack>
               ) : (
-                <Text>Nincs még könyv</Text>
+                // no poll, no winner yet
+                <Text>Nincs még könyv kiválasztva.</Text>
               )}
             </Box>
           ) : (
@@ -693,19 +752,22 @@ export default function Dashboard() {
       <Box justifyItems="center" w="full" maxW="md" bg="white" boxShadow="md" borderRadius="md" p="6">
         <VStack align="start" spacing="4">
           {meeting.placeholder ? (
-            // No upcoming meeting
-            <Box textAlign="center" py={8}>
-              <Button
-                size="md"
-                colorScheme="teal"
-                leftIcon={<FaCalendarAlt />}
-                onClick={() => setShowMeetingTime(true)}
-                px={6}
-                py={4}
-              >
-                Időpont kiválasztása
-              </Button>
-            </Box>
+            <Flex w="full" h="200px" justify="center" align="center">
+              {openRoundId ? (
+                <Button
+                  size="md"
+                  colorScheme="teal"
+                  leftIcon={<FaCalendarAlt />}
+                  onClick={() => setShowMeetingTime(true)}
+                  px={6}
+                  py={4}
+                >
+                  Időpont kiválasztása
+                </Button>
+              ) : (
+                <Text>Nincs még esemény meghirdetve.</Text>
+              )}
+            </Flex>
           ) : (
             // Real meeting
             <>
@@ -735,7 +797,7 @@ export default function Dashboard() {
                       <Button
                         leftIcon={<FaMapMarkerAlt />}
                         as={Link}
-                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location)}`}
+                        href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(location)}`}
                         isExternal
                         flex="1"
                         minW="140px"
@@ -768,7 +830,7 @@ export default function Dashboard() {
                               </Avatar.Root>
                             ))}
                             {overflow.length > 0 && (
-                              <Avatar.Root variant="outline">
+                              <Avatar.Root>
                                 <Avatar.Fallback>+{overflow.length}</Avatar.Fallback>
                               </Avatar.Root>
                             )}

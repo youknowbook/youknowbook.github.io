@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Flex, Heading, Text, Spinner, AspectRatio, useBreakpointValue } from '@chakra-ui/react';
+import { Box, Flex, Heading, Text, Spinner, AspectRatio, Image  } from '@chakra-ui/react';
 import { supabase } from '../api/supabaseClient';
 import { ComposableMap, Geographies, Geography, Marker } from 'react-simple-maps';
 import { scaleSequential } from 'd3-scale';
@@ -8,6 +8,7 @@ import { geoCentroid } from 'd3-geo';
 import countries from 'i18n-iso-countries';
 import huLocale from 'i18n-iso-countries/langs/hu.json';
 import enLocale from 'i18n-iso-countries/langs/en.json';
+import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 
 // Register Hungarian and English locales for country translations
 countries.registerLocale(huLocale);
@@ -119,6 +120,13 @@ const Stats = () => {
     ...books.filter(b => !orderedBookIds.includes(b.id))
   ];
 
+  const femaleBooks = books.filter(b => b.author_gender === 'nő')
+  const maleBooks   = books.filter(b => b.author_gender === 'férfi')
+  const genderSummary = [
+    { name: 'nő',   value: femaleBooks.length },
+    { name: 'férfi', value: maleBooks.length },
+  ]
+
   // Enhanced BookSpine with intelligent title wrapping
   const BookSpine = ({ book, maxPages, moodColor  }) => {
     const widthPx = maxPages
@@ -156,6 +164,7 @@ const Stats = () => {
         current += current ? ' ' + w : w;
       }
     });
+
     if (current) lines.push(current.trim());
 
     return (
@@ -213,7 +222,9 @@ const Stats = () => {
     <Box p={6}>
       {/* 1. Map with book covers and leader lines */}
       <Box mb={4} position="relative" overflow="visible" justifyItems={"center"}>
-        <Heading size="xl" mb={2}>Országok, ahol "jártunk"</Heading>
+        <Flex w="100%" mb={2} align="center" justify="center">
+          <Heading size="xl">Országok, ahol "jártunk"</Heading>
+        </Flex>
         <AspectRatio ratio={4 / 3} width={{base:"100%", md:"80%"}} height="80%">
           <ComposableMap projectionConfig={{ rotate: [-10, 0, 0], scale: 147 }}>
             <Geographies geography={geoUrl}>
@@ -317,7 +328,9 @@ const Stats = () => {
 
       {/* 2. Custom timeline */}
       <Box mb={10} position="relative" height="350px">
-        <Heading justifySelf="center" size="xl" bottom="2">Az Idővonalunk</Heading>
+        <Flex w="100%" mb={4} align="center" justify="center">
+          <Heading size="xl">Az Idővonalunk</Heading>
+        </Flex>
         
         <Flex>
           {/* axis with arrow */}
@@ -431,9 +444,102 @@ const Stats = () => {
         </Flex>
       </Box>
 
+      {/* Hány női és férfi szerzőt olvastunk? */}
+      <Flex direction="column" align="center" mb={10} px={4}>
+        <Heading size="xl" mb={6} textAlign="center">
+          Hány női és férfi szerzőt olvastunk?
+        </Heading>
+
+        <Flex
+          direction={{ base: "column", md: "row" }}
+          align="center"
+          justify="center"
+          w="100%"
+        >
+          {/* Pie */}
+          <Box flexShrink={0}>
+            <ResponsiveContainer width={200} height={200}>
+              <PieChart>
+                <Pie
+                  data={genderSummary}
+                  dataKey="value"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={90}
+                  startAngle={90}
+                  endAngle={-270}
+                  labelLine={false}
+                  label={false}
+                >
+                  <Cell key="nő" fill="#F2B3E5" />
+                  <Cell key="férfi" fill="#B3DFF2" />
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </Box>
+
+          {/* Cover boxes */}
+          <Flex
+            direction="column"
+            ml={{ base: 0, md: 8 }}
+            mt={{ base: 6, md: 0 }}
+            w={{ base: "100%", md: "auto" }}
+            maxW={{ base: "360px", md: "none" }}
+            gap={4}
+          >
+            {/* nő */}
+            <Box
+              bg="#F2B3E5"
+              p={4}
+              borderRadius="md"
+              boxShadow="sm"
+              w="100%"
+            >
+              <Flex wrap="wrap" justify="center" gap={2}>
+                {femaleBooks.map((book) => (
+                  <Box
+                    as="img"
+                    key={book.id}
+                    src={book.cover_url}
+                    boxSize={{ base: "40px", sm: "60px", md: "80px" }}
+                    objectFit="cover"
+                    borderRadius="md"
+                  />
+                ))}
+              </Flex>
+            </Box>
+
+            {/* férfi */}
+            <Box
+              bg="#B3DFF2"
+              p={4}
+              borderRadius="md"
+              boxShadow="sm"
+              w="100%"
+            >
+              <Flex wrap="wrap" justify="center" gap={2}>
+                {maleBooks.map((book) => (
+                  <Box
+                    as="img"
+                    key={book.id}
+                    src={book.cover_url}
+                    boxSize={{ base: "40px", sm: "60px", md: "80px" }}
+                    objectFit="cover"
+                    borderRadius="md"
+                  />
+                ))}
+              </Flex>
+            </Box>
+          </Flex>
+        </Flex>
+      </Flex>
+
       {/* 3. Genre distribution with pastel colors and cover thumbnails */}
       <Box mb={10}>
-        <Heading justifySelf="center" size="xl" mb={2}>Milyen műfajokat olvasunk?</Heading>
+        <Flex w="100%" mb={4} align="center" justify="center">
+          <Heading size="xl">Milyen műfajokat olvasunk?</Heading>
+        </Flex>
         <Flex direction="column" gap={2}>
           {genreData.map(({ genre, count }, i) => {
             const widthPct = maxGenre > 0 ? (count / maxGenre) * 100 : 0;
@@ -477,7 +583,9 @@ const Stats = () => {
 
       {/* 4. Enhanced bookshelf with brown shelves and left-aligned rows */}
       <Box>
-        <Heading justifySelf="center" size="xl" mb={4}>A Könyvespolcunk</Heading>
+        <Flex w="100%" mb={4} align="center" justify="center">
+          <Heading size="xl">Az Könyvespolcunk</Heading>
+        </Flex>
         <Box
           width="100%"
           px={2}

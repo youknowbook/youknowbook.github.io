@@ -1,7 +1,6 @@
-// src/components/Register.jsx
+// src/components/Auth/Register.jsx
 import React, { useState } from 'react'
 import { useNavigate, Link as RouterLink } from 'react-router-dom'
-import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../api/supabaseClient'
 import {
   Box,
@@ -19,24 +18,38 @@ export default function Register() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const { register } = useAuth()
-  const navigate = useNavigate()
+  const [secretCode, setSecretCode] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const navigate = useNavigate()
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setError(''); setSuccess('')
+    setError('')
+    setSuccess('')
+
+    // 1) Validate the secret passcode
+    const expected = import.meta.env.VITE_SECRET_PASSCODE
+    if (secretCode !== expected) {
+      setError('Helytelen titkos jelszó.')
+      return
+    }
+
+    // 2) Sign up with displayName in metadata
     try {
-      const { data, error: regError } = await register(email, password)
-      if (regError) throw regError
-      const user = data.user
-      if (!user) {
-        setSuccess('Erősítsd meg az e-mail címed, mielőtt belépnél!')
-        return
-      }
-      localStorage.setItem('pendingDisplayName', displayName)
-      navigate('/profile')
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { display_name: displayName },
+          emailRedirectTo: `${window.location.origin}${import.meta.env.BASE_URL}profile`
+        }
+      })
+      if (signUpError) throw signUpError
+
+      // 3) Email confirmation sent; then redirect to profile
+      setSuccess('Erősítsd meg az e-mail címed, mielőtt belépnél!')
+      setTimeout(() => navigate('/profile'), 1000)
     } catch (err) {
       console.error(err)
       setError(err.message || 'Regisztrációs hiba. Kérlek, próbáld újra.')
@@ -54,7 +67,7 @@ export default function Register() {
       _before={{
         content: `""`,
         display: { base: 'none', md: 'block' },
-        bgImage: `url(blue_circle_transparent.png)`,
+        bgImage: `url(/blue_circle_transparent.png)`,
         bgSize: 'cover',
         bgPos: 'center',
         opacity: 0.1,
@@ -133,6 +146,13 @@ export default function Register() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              focusBorderColor="blue.400"
+            />
+            <Input
+              placeholder="Titkos jelszó"
+              type="password"
+              value={secretCode}
+              onChange={(e) => setSecretCode(e.target.value)}
               focusBorderColor="blue.400"
             />
             <Button type="submit" colorScheme="blue" width="full" size="lg">
