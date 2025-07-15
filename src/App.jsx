@@ -12,6 +12,7 @@ import AdminRoute from './components/Layout/AdminRoute'
 import { useAuth } from './context/AuthContext'
 import { Box, Button, Heading, Text, VStack } from '@chakra-ui/react'
 import ResetPassword from './components/Auth/ResetPassword'
+import UpdateCredentials from './components/Auth/UpdateCredentials'
 
 const basename = import.meta.env.BASE_URL
 
@@ -47,6 +48,9 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+
+        {/* new “throwaway” landing page */}
+        <Route path="/update-credentials" element={<UpdateCredentials />} />
 
         {/* Auth-dependent Home */}
         <Route path="/" element={<Home />} />

@@ -1,6 +1,6 @@
-// src/components/Login.jsx
-import React, { useState } from 'react'
-import { useNavigate, Link as RouterLink } from 'react-router-dom'
+// src/components/Auth/Login.jsx
+import React, { useState, useEffect } from 'react'
+import { useNavigate, Link as RouterLink, useLocation } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../api/supabaseClient'
 import {
@@ -16,12 +16,38 @@ import {
 } from '@chakra-ui/react'
 
 export default function Login() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { login } = useAuth()
+
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const { login } = useAuth()
-  const navigate = useNavigate()
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+
+  // 1) Handle Supabase magic-link (email change / reset / social) tokens
+  useEffect(() => {
+    const url = window.location.href
+    if (url.includes('access_token') || url.includes('refresh_token')) {
+      supabase.auth
+        .getSessionFromUrl({ storeSession: true })
+        .then(({ error }) => {
+          if (error) {
+            console.error('Auth redirect error:', error.message)
+            setError(error.message)
+            return
+          }
+          // 2) If they just updated credentials, send them to /profile
+          if (localStorage.getItem('justUpdated') === 'true') {
+            localStorage.removeItem('justUpdated')
+            navigate('/profile', { replace: true })
+          } else {
+            // 3) Normal magic-link login
+            navigate('/', { replace: true })
+          }
+        })
+    }
+  }, [location, navigate])
 
   const handleForgotPassword = async () => {
     setError(''); setSuccess('')
@@ -30,49 +56,22 @@ export default function Login() {
       return
     }
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}${import.meta.env.BASE_URL}reset-password`
+      redirectTo: `${window.location.origin}/reset-password`
     })
-    if (resetError) {
-      setError(resetError.message)
-    } else {
-      setSuccess('✅ Nézd meg az emaileidet! Link elküldve.')
-    }
+    if (resetError) setError(resetError.message)
+    else setSuccess('✅ Nézd meg az emaileidet! Link elküldve.')
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError(''); setSuccess('')
+    // 4) Clear any leftover "justUpdated" flag on normal login
+    localStorage.removeItem('justUpdated')
+
     try {
       const { error: loginError } = await login(email, password)
       if (loginError) throw loginError
-
-      const { data: authData, error: userError } = await supabase.auth.getUser()
-      const user = authData?.user
-      if (userError || !user) {
-        setError('Nem tudtuk betölteni a felhasználói adatokat. Próbáld újra.')
-        return
-      }
-
-      const { data: profile } = await supabase
-        .from('users')
-        .select('id')
-        .eq('id', user.id)
-        .maybeSingle()
-
-      if (!profile) {
-        const displayName = localStorage.getItem('pendingDisplayName') || ''
-        await supabase.from('users').insert({
-          id: user.id,
-          display_name: displayName,
-          motto: '',
-          profile_picture: null,
-          favourite_books: []
-        })
-        localStorage.removeItem('pendingDisplayName')
-      }
-
-      setSuccess('Bejelentkeztél! Átirányítunk…')
-      setTimeout(() => navigate('/profile'), 800)
+      navigate('/', { replace: true })
     } catch (err) {
       console.error(err)
       setError(err.message || 'Bejelentkezési hiba. Kérlek, próbáld újra.')
@@ -125,18 +124,9 @@ export default function Login() {
           />
         ))}
       </Box>
-
-      <Box
-        bg="white"
-        p={8}
-        rounded="2xl"
-        shadow="lg"
-        w={{ base: '90%', md: '400px' }}
-        zIndex={1}
-      >
-        <Heading mb={6} textAlign="center" color="gray.800">
-          you-know-book
-        </Heading>
+      {/* Mobile logos omitted for brevity */}
+      <Box bg="white" p={8} rounded="2xl" shadow="lg" w={{ base: '90%', md: '400px' }} zIndex={1}>
+        <Heading mb={6} textAlign="center" color="gray.800">you-know-book</Heading>
 
         {error && (
           <Box bg="red.100" borderRadius="md" p={3} mb={4}>
@@ -155,25 +145,20 @@ export default function Login() {
               placeholder="Email"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={e => setEmail(e.target.value)}
               focusBorderColor="blue.400"
             />
             <Input
               placeholder="Jelszó"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={e => setPassword(e.target.value)}
               focusBorderColor="blue.400"
             />
             <Button type="submit" colorScheme="blue" width="full" size="lg">
               Bejelentkezés
             </Button>
-            <Link
-              onClick={handleForgotPassword}
-              fontSize="sm"
-              alignSelf="flex-end"
-              color="blue.500"
-            >
+            <Link onClick={handleForgotPassword} fontSize="sm" alignSelf="flex-end" color="blue.500">
               Elfelejtett jelszó?
             </Link>
           </VStack>

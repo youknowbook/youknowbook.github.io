@@ -26,7 +26,15 @@ export default function PrivateRoute() {
   const location = useLocation()
   const navigate = useNavigate()
 
-  if (!user) return <Navigate to="/login" replace />
+  // 1) No user
+  if (!user) {
+    return <Navigate to="/login" replace /> 
+  } 
+ 
+  // 2) Temp-domain users → force them to update credentials 
+  if (user.email?.endsWith('@temp.youknowbook.local')) { 
+    return <Navigate to="/update-credentials" replace /> 
+  }
 
   const handleNav = (path) => {
     navigate(path)
