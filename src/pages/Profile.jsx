@@ -208,10 +208,18 @@ export default function Profile() {
 
         <VStack align="start" spacing={2} flexGrow={1}>
           <Text>A nevem:</Text>
-          <Input
-            value={displayName}
-            onChange={e => setDisplayName(e.target.value)}
-          />
+          {displayName ? (
+            <Text fontSize="lg" fontWeight="bold">
+              {displayName}
+            </Text>
+          ) : (
+            // otherwise let them type one in
+            <Input
+              placeholder="Írd be a neved"
+              value={displayName}
+              onChange={e => setDisplayName(e.target.value)}
+            />
+         )}
           <Text>Jelmondat/idézet:</Text>
           <Input
             value={motto}

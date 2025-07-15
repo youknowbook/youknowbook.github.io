@@ -19,6 +19,7 @@ import {
   Checkbox,
   CheckboxGroup,
   RadioGroup,
+  Flex
 } from '@chakra-ui/react'
 import {
   FaCheck,
@@ -67,13 +68,13 @@ export default function Voting({ onClose, onVoted }) {
     setGenderFilter([])
   }
 
-  // 1) Load open poll
+  // 1) Load open poll (now grabbing `tally`)
   useEffect(() => {
     async function fetchPoll() {
       setLoading(true)
       const { data: p, error: pe } = await supabase
         .from('polls')
-        .select('id,current_round')
+        .select('id,round,tally,past_meeting_id')
         .eq('status', 'open')
         .maybeSingle()
       if (pe && pe.code !== 'PGRST116') {
@@ -82,56 +83,91 @@ export default function Voting({ onClose, onVoted }) {
         setError('Nincs éppen nyitott szavazás.')
       } else {
         setPoll(p)
-        setRound(p.current_round)
+        setRound(p.round)
       }
       setLoading(false)
     }
     fetchPoll()
   }, [])
 
-  // 2) Load options + existing vote
+  // 2) Load options + existing vote (no more poll_options table)
   useEffect(() => {
     if (!poll) return
     async function loadOptions() {
       setLoading(true)
       setError(null)
       try {
-        const opts = []
+        let bookIds, bs
+
         if (round === 1) {
-          const { data: bs, error: be } = await supabase
+          // first round: entire waitlist
+          const { data: all, error } = await supabase
             .from('books')
             .select(`
               id, title, cover_url, author, page_count,
-              genre, country, author_gender, is_selected, added_by
+              genre, country, author_gender, is_selected, added_by, release_year
             `)
-          if (be) throw be
+          if (error) throw error
 
-          bs.filter(b => !b.is_selected && b.added_by !== displayName)
-            .forEach(b =>
-              opts.push({ book_id: b.id, book: { ...b, genres: b.genre } })
-            )
+          // filter out already-selected and your own adds
+          bs = all.filter(
+            b => !b.is_selected && b.added_by !== displayName
+          )
+
         } else {
-          const { data: po, error: pe } = await supabase
-            .from('poll_options')
-            .select('book_id')
-            .eq('poll_id', poll.id)
-            .eq('round', round)
-          if (pe) throw pe
-          const bookIds = po.map(r => r.book_id)
-          if (bookIds.length) {
-            const { data: bs, error: be } = await supabase
+          // round > 1: look up the *previous* round’s tally
+          const { data: prev, error: prevErr } = await supabase
+            .from('polls')
+            .select('tally')
+            .eq('past_meeting_id', poll.past_meeting_id)
+            .eq('round', round - 1)
+            .single()
+          if (prevErr) throw prevErr
+
+          // count votes per book
+          const mapping = prev?.tally || {}
+          const counts = Object.values(mapping).reduce((acc, bid) => {
+            acc[bid] = (acc[bid] || 0) + 1
+            return acc
+          }, {})
+          const sorted = Object.entries(counts).sort(([,a],[,b]) => b - a)
+
+          let filterIds = []
+          if (sorted.length) {
+            const topCount = sorted[0][1]
+            // all books tied for top
+            filterIds = sorted.filter(([,c]) => c === topCount).map(([id]) => id)
+            if (filterIds.length === 1) {
+              // only one top → include second‐place as well
+              const secondCount = sorted[1]?.[1] || 0
+              const secondIds = sorted.filter(([,c]) => c === secondCount).map(([id]) => id)
+              filterIds = [filterIds[0], ...secondIds]
+            }
+          }
+
+          // fetch only those books
+          if (filterIds.length) {
+            const { data, error } = await supabase
               .from('books')
-              .select('id, title, cover_url, author, page_count, genre, country, author_gender')
-              .in('id', bookIds)
-            if (be) throw be
-            bs.forEach(b =>
-              opts.push({ book_id: b.id, book: { ...b, genres: b.genre } })
-            )
+              .select('id, title, cover_url, author, page_count, genre, country, author_gender, release_year')
+              .in('id', filterIds)
+            if (error) throw error
+            bs = data
+          } else {
+            bs = []
           }
         }
 
+        // build opts array
+        const opts = bs.map(b => ({
+          book_id: b.id,
+          book: { ...b, genres: b.genre }
+        }))
+
         setOptions(opts)
-        setAllGenres(Array.from(new Set(opts.flatMap(o => o.book.genres))).sort())
+        setAllGenres(
+          Array.from(new Set(opts.flatMap(o => o.book.genres))).sort()
+        )
         setAllCountries(
           Array.from(new Set(opts.map(o => o.book.country).filter(Boolean))).sort()
         )
@@ -139,6 +175,7 @@ export default function Voting({ onClose, onVoted }) {
           Array.from(new Set(opts.map(o => o.book.author_gender).filter(Boolean))).sort()
         )
 
+        // load this user's vote
         const { data: v, error: ve } = await supabase
           .from('votes')
           .select('book_id')
@@ -147,6 +184,7 @@ export default function Voting({ onClose, onVoted }) {
           .eq('round', round)
           .maybeSingle()
         if (!ve && v) setMyVote(v.book_id)
+
       } catch (err) {
         console.error(err)
         setError(err.message || 'Hiba a könyvek betöltésekor')
@@ -229,26 +267,81 @@ export default function Voting({ onClose, onVoted }) {
     return () => clearTimeout(t)
   }, [notification])
 
+  // Round stop
+  useEffect(() => {
+    if (!myVote || !poll) return;
+
+    (async () => {
+      // 1) all votes for this poll & round
+      const { data: votes } = await supabase
+        .from('votes')
+        .select('user_id,book_id')
+        .eq('poll_id', poll.id)
+        .eq('round', round)
+
+      // 2) fetch the single most‐recent meeting
+      const { data: lastMeet } = await supabase
+        .from('meetings')
+        .select('attendees')
+        .order('date', { ascending: false })
+        .order('time', { ascending: false })
+        .limit(1)
+        .single()
+
+      const eligible = Array.isArray(lastMeet?.attendees)
+        ? lastMeet.attendees
+        : []
+
+      // 3) have all eligible users voted?
+      const uniqueVoters = [...new Set(votes.map(v => v.user_id))]
+      if (uniqueVoters.length !== eligible.length) return
+
+      // 4) build tally: user_id → book_id
+      const tally = votes.reduce((acc, { user_id, book_id }) => {
+        acc[user_id] = book_id
+        return acc
+      }, {})
+
+      // 5) write into polls.tally
+      await supabase
+        .from('polls')
+        .update({ tally })
+        .eq('id', poll.id)
+
+      // 6) notify
+      setNotification({
+        status: 'info',
+        title: 'Hamarosan eredményhirdetés',
+      })
+    })()
+  }, [myVote, poll, round])
+
   if (loading) return <VStack py={10}><Spinner size="lg"/></VStack>
-  if (error)
+  if (error) {
     return (
-      <Alert status="error">
-        <Alert.Icon />
-        <Alert.Title>Hiba</Alert.Title>
-        <Alert.Description>{error}</Alert.Description>
-      </Alert>
+      <Alert.Root status="error">
+        <Alert.Indicator />
+        <Alert.Content>
+          <Alert.Title>Hiba</Alert.Title>
+          <Alert.Description>{error}</Alert.Description>
+        </Alert.Content>
+      </Alert.Root>
     )
+  }
+
 
   return (
     <VStack spacing={6} align="stretch" p={4}>
       {notification && (
-        <Alert status={notification.status}>
-          <Alert.Icon />
-          <Alert.Title>{notification.title}</Alert.Title>
-          {notification.description && (
-            <Alert.Description>{notification.description}</Alert.Description>
-          )}
-        </Alert>
+        <Alert.Root status={notification.status}>
+          <Alert.Indicator />
+          <Alert.Content>
+            <Alert.Title>{notification.title}</Alert.Title>
+            {notification.description && (
+              <Alert.Description>{notification.description}</Alert.Description>
+            )}
+          </Alert.Content>
+        </Alert.Root>
       )}
 
       {/* Header */}
@@ -264,9 +357,17 @@ export default function Voting({ onClose, onVoted }) {
         </IconButton>
       </HStack>
 
-      <Text fontSize="sm">
-        Válassz egy könyvet a listából, majd kattints a „Szavazok” gombra.
-      </Text>
+      <Flex w="100%" mb={2} align="center" justify="center">
+        {myVote ? (
+          <Text fontSize="md" color="red.600" fontStyle="italic">
+            Ebben a körben már szavaztál.
+          </Text>
+        ) : (
+          <Text fontSize="sm">
+            Válassz egy könyvet a listából, majd kattints a „Szavazok” gombra.
+          </Text>
+        )}
+      </Flex>
 
       {/* Desktop filters */}
       <Box display={{ base: 'none', md: 'flex' }} justifyContent="space-between"  alignItems="center">
@@ -381,6 +482,11 @@ export default function Voting({ onClose, onVoted }) {
             onClick={clearAll}
             flexShrink={0}
             mt={6}
+            disabled={
+              genreFilter.length === 0 &&
+              countryFilter.length === 0 &&
+              genderFilter.length === 0
+            }
             >
                 <Box position="relative" w="1.5em" h="1.5em">
                     <Box as={FaFilter} boxSize="1.5em" position="absolute" right="0.01em" />
@@ -603,7 +709,11 @@ export default function Voting({ onClose, onVoted }) {
           </Popover.Root>
 
           {/* Clear All */}
-          <IconButton aria-label="Szűrők törlése" onClick={clearAll}>
+          <IconButton aria-label="Szűrők törlése" onClick={clearAll} disabled={
+            genreFilter.length === 0 &&
+            countryFilter.length === 0 &&
+            genderFilter.length === 0
+          }>
                 <Box position="relative" w="1.5em" h="1.5em">
                     <Box as={FaFilter} boxSize="1.5em" position="absolute" right="0.01em" />
                     <Box
@@ -688,7 +798,7 @@ export default function Voting({ onClose, onVoted }) {
               boxSize="40px"
               p={0}
               colorScheme={myVote === book_id ? 'green' : 'blue'}
-              isDisabled={!!myVote}
+              disabled={!!myVote}
               onClick={() => castVote(book_id)}
               aria-label={myVote === book_id ? 'Szavaztál' : 'Szavazok'}
             >

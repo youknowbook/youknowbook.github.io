@@ -498,7 +498,11 @@ export default function Books() {
                 </Select.Root>
 
                 {/* Clear all filters */}
-                <IconButton aria-label="Szűrők törlése" onClick={clearAll} flexShrink={0} mt={6}>
+                <IconButton aria-label="Szűrők törlése" onClick={clearAll} flexShrink={0} mt={6} disabled={
+                  genreFilter.length === 0 &&
+                  countryFilter.length === 0 &&
+                  genderFilter.length === 0
+                }>
                   <Box position="relative" w="1.5em" h="1.5em">
                     <Box as={FaFilter} boxSize="1.5em" position="absolute" right="0.01em" />
                     <Box as={FaTimes} position="absolute" top="2" right="-1" fontSize="0.6em" color="red.500" />
@@ -709,7 +713,11 @@ export default function Books() {
                 </Popover.Root>
       
                 {/* Clear All */}
-                <IconButton aria-label="Szűrők törlése" onClick={clearAll}>
+                <IconButton aria-label="Szűrők törlése" onClick={clearAll} disabled={
+                  genreFilter.length === 0 &&
+                  countryFilter.length === 0 &&
+                  genderFilter.length === 0
+                }>
                       <Box position="relative" w="1.5em" h="1.5em">
                           <Box as={FaFilter} boxSize="1.5em" position="absolute" right="0.01em" />
                           <Box

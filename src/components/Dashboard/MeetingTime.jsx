@@ -21,8 +21,6 @@ const fullWeekdays = ['Hétfő','Kedd','Szerda','Csütörtök','Péntek','Szomba
 const initials     = fullWeekdays.map(d => d[0])
 
 export default function MeetingTime({
-  year,
-  month,
   roundId,
   initialParticipants = {},
   onChange = () => {},
@@ -47,6 +45,26 @@ export default function MeetingTime({
   }, [])
   const cellBg  = isDark ? 'gray.700' : 'gray.50'
   const hoverBg = isDark ? 'blue.600' : 'blue.100'
+
+  // ← right after props destructuring
+  const [year, setYear] = useState(null)
+  const [month, setMonth] = useState(null)
+
+  useEffect(() => {
+    if (!roundId) return
+    supabase
+      .from('date_selection_rounds')
+      .select('year, month')
+      .eq('id', roundId)
+      .single()
+      .then(({ data, error }) => {
+        if (error) console.error('Failed to load round date:', error)
+        else {
+          setYear(data.year)
+          setMonth(Number(data.month))
+        }
+      })
+  }, [roundId])
 
   const [participantsByDate, setParticipantsByDate] =
     useState(initialParticipants)
@@ -94,6 +112,10 @@ export default function MeetingTime({
     while (cells.length % 7) cells.push(null)
     return cells
   }, [year, month])
+
+  if (year === null || month === null) {
+    return <Text>Betöltés…</Text>
+  }
 
   async function handleDayClick(day) {
     if (readOnly || !roundId) return
@@ -166,9 +188,33 @@ export default function MeetingTime({
                 flexDir="column"
                 justifyContent="flex-start"
                 alignItems="flex-start"
+                overflow="hidden"
+                position="relative"
               >
-                {day && (
-                  <Text fontSize="sm">{day}</Text>
+                {day && <Text fontSize="sm" mb={2}>{day}</Text>}
+
+                {avatars.length > 0 && (
+                  <AvatarGroup
+                    size="xs"
+                    stacking="first-on-top"
+                    display={{ base: 'none', md: 'flex' }}
+                    spacing="-1"
+                    position="absolute"
+                    bottom="2"
+                    left="2"
+                  >
+                    {avatars.slice(0, 4).map((a) => (
+                      <Avatar.Root key={a.userId}>
+                        <Avatar.Fallback>{a.name[0]}</Avatar.Fallback>
+                        <Avatar.Image src={a.url} alt={a.name} />
+                      </Avatar.Root>
+                    ))}
+                    {avatars.length > 5 && (
+                      <Avatar.Root>
+                        <Avatar.Fallback>+{avatars.length - 4}</Avatar.Fallback>
+                      </Avatar.Root>
+                    )}
+                  </AvatarGroup>
                 )}
               </Box>
             </AspectRatio>
@@ -190,13 +236,22 @@ export default function MeetingTime({
                   {date.slice(5,7)}.{date.slice(8)}
                 </Text>
               </Box>
-              <AvatarGroup size="sm" max={8}>
-                {avatars.map(({ url, name }) => (
-                  <Avatar.Root key={url} size="sm">
-                    <AvatarFallback>{name}</AvatarFallback>
-                    <AvatarImage src={url} />
+              <AvatarGroup
+                size="sm"
+                stacking="first-on-top"
+                display={{ base: 'flex', md: 'none' }}
+              >
+                {avatars.slice(0, 4).map((a) => (
+                  <Avatar.Root key={a.userId}>
+                    <Avatar.Fallback>{a.name[0]}</Avatar.Fallback>
+                    <Avatar.Image src={a.url} alt={a.name} />
                   </Avatar.Root>
                 ))}
+                {avatars.length > 5 && (
+                  <Avatar.Root>
+                    <Avatar.Fallback>+{avatars.length - 4}</Avatar.Fallback>
+                  </Avatar.Root>
+                )}
               </AvatarGroup>
             </HStack>
           ))}
