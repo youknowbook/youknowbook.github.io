@@ -23,6 +23,8 @@ import MeetingTime from '../components/Dashboard/MeetingTime'
 import PollResults from '../components/Dashboard/PollResults'
 
 export default function Admin() {
+  const TIE_SENTINEL = 'all tie'
+
   // Books & meeting form
   const [books, setBooks] = useState([])
   const [selectedBooks, setSelectedBooks] = useState([])
@@ -145,19 +147,23 @@ export default function Admin() {
     }
   }, [voteSuccess, voteError])
 
-  // Load any open poll
+  // Load any open poll (pick the newest if multiple exist by accident)
   useEffect(() => {
     async function loadOpenPoll() {
       const { data, error } = await supabase
         .from('polls')
-        .select('id, round, tally, past_meeting_id')
-        .eq('status','open')
-        .maybeSingle()
+        .select('id, round, tally, past_meeting_id, winner, created_at')
+        .eq('status', 'open')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+
       if (!error && data) setOpenPoll(data)
       else setOpenPoll(null)
     }
     loadOpenPoll()
   }, [])
+
 
   // Book select helper
   const bookCollection = createListCollection({
@@ -344,38 +350,166 @@ export default function Admin() {
   const today0 = new Date().setHours(0,0,0,0)
 
   // Finalizer for PollResults
-  async function finalizeRound(result) {
-    // close current
-    await supabase
-      .from('polls')
-      .update({
-        status:'complete',
-        winner: result.type === 'winner' ? result.bookId : 'next round'
-      })
-      .eq('id', openPoll.id)
+  async function finalizeRound() {
+    try {
+      if (!openPoll) return;
 
-    if (result.type !== 'winner') {
-      // start next
+      const TIE_SENTINEL = 'all tie';
+
+      // 1) Close the current poll row first (no winner yet)
       await supabase
         .from('polls')
-        .insert([{
-          past_meeting_id: openPoll.past_meeting_id,
-          round: openPoll.round + 1,
-          status:'open',
+        .update({ status: 'complete' })
+        .eq('id', openPoll.id);
+
+      // 2) Read the row we just closed
+      const { data: cur, error: curErr } = await supabase
+        .from('polls')
+        .select('id, past_meeting_id, round, tally, created_at')
+        .eq('id', openPoll.id)
+        .single();
+      if (curErr) throw curErr;
+
+      // 3) Pull completed rounds for this meeting up to this round (newest first)
+      const { data: rowsRaw, error: rowsErr } = await supabase
+        .from('polls')
+        .select('id, winner, tally, created_at, round')
+        .eq('past_meeting_id', cur.past_meeting_id)
+        .lte('round', cur.round)
+        .eq('status', 'complete')
+        .order('created_at', { ascending: false });
+      if (rowsErr) throw rowsErr;
+
+      const rows = rowsRaw || [];
+      if (!rows.length) throw new Error('No completed rounds found to finalize.');
+
+      // 4) Build the "segment": current + immediately-preceding "all tie" rounds
+      const segment = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        if (i === 0) { segment.push(r); continue; }
+        if (r.winner === TIE_SENTINEL) segment.push(r);
+        else break;
+      }
+
+      // helper: rebuild a tally from votes if it's missing
+      async function ensureTally(pollRow) {
+        const t = pollRow.tally || {};
+        if (Object.keys(t).length > 0) return t;
+        const { data: vs, error: vErr } = await supabase
+          .from('votes')
+          .select('user_id, book_id')
+          .eq('poll_id', pollRow.id);
+        if (vErr) throw vErr;
+        return (vs || []).reduce((acc, { user_id, book_id }) => {
+          acc[user_id] = book_id;
+          return acc;
+        }, {});
+      }
+
+      // 5) Counts across the whole segment
+      const counts = {};
+      let total = 0;
+      for (const r of segment) {
+        const t = await ensureTally(r);
+        Object.values(t).forEach(bid => {
+          counts[bid] = (counts[bid] || 0) + 1;
+          total += 1;
+        });
+      }
+
+      // Safety: if somehow no votes, mark all tie and open next
+      if (total === 0) {
+        await supabase.from('polls').update({ winner: TIE_SENTINEL }).eq('id', cur.id);
+        await supabase.from('polls').insert([{
+          past_meeting_id: cur.past_meeting_id,
+          round: (cur.round || 1) + 1,
+          status: 'open',
           tally: {}
-        }])
+        }]);
+        const { data: nextOpen } = await supabase
+          .from('polls')
+          .select('id, round, tally, past_meeting_id, winner, created_at')
+          .eq('status', 'open')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        setOpenPoll(nextOpen || null);
+        setShowResults(false);
+        setFinalResult(null);
+        return;
+      }
+
+      // 6) NEW all-tie rules
+      // Round 1: all voted books have exactly 1 vote this round
+      const countsThisRound = Object.values(cur.tally || {}).reduce((m, id) => {
+        m[id] = (m[id] || 0) + 1;
+        return m;
+      }, {});
+      let allTie = false;
+      if (cur.round === 1) {
+        const vals = Object.values(countsThisRound);
+        allTie = vals.length > 1 && vals.every(c => c === 1);
+      } else {
+        // Round >= 2: all books that ENTERED the round have equal SEGMENT totals.
+        // We approximate "entered" as every book that appeared in any tally within the segment.
+        const entrantIds = new Set();
+        for (const r of segment) {
+          const t = await ensureTally(r);
+          Object.values(t).forEach(bid => entrantIds.add(bid));
+        }
+        const entrantCounts = [...entrantIds].map(id => counts[id] || 0);
+        allTie = entrantCounts.length > 1 && entrantCounts.every(c => c === entrantCounts[0]);
+      }
+
+      let winnerValue;
+      if (allTie) {
+        winnerValue = TIE_SENTINEL;
+      } else {
+        // decide winner/next round from SEGMENT counts
+        const sorted = Object.entries(counts).sort(([,a],[,b]) => b - a);
+        const [topId, topCount] = sorted[0];
+        const secondCount = sorted[1]?.[1] ?? 0;
+
+        if (topCount * 2 >= total) {
+          // >= 50%
+          winnerValue = topId;
+        } else if (topCount > secondCount) {
+          winnerValue = 'next round';
+        } else {
+          winnerValue = 'next round'; // tie for lead but not “all tie”
+        }
+      }
+
+      // 7) Save winner on the recently closed round
+      await supabase.from('polls').update({ winner: winnerValue }).eq('id', cur.id);
+
+      // 8) Open next round only if we didn’t find a final book winner
+      if (typeof winnerValue === 'string') {
+        await supabase.from('polls').insert([{
+          past_meeting_id: cur.past_meeting_id,
+          round: (cur.round || 1) + 1,
+          status: 'open',
+          tally: {}
+        }]);
+      }
+
+      // 9) Refresh UI
+      const { data: nextOpen } = await supabase
+        .from('polls')
+        .select('id, round, tally, past_meeting_id, winner, created_at')
+        .eq('status', 'open')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      setOpenPoll(nextOpen || null);
+      setShowResults(false);
+      setFinalResult(null);
+    } catch (err) {
+      setShowResults(true);
+      console.error('finalizeRound error:', err);
     }
-
-    // reload open poll
-    const { data: next } = await supabase
-      .from('polls')
-      .select('id, round, tally, past_meeting_id')
-      .eq('status','open')
-      .maybeSingle()
-
-    setOpenPoll(next)
-    setShowResults(false)
-    setFinalResult(null)
   }
 
   return (

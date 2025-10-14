@@ -41,6 +41,8 @@ export default function Voting({ onClose, onVoted }) {
   const { user } = useAuth()
   const displayName = user.user_metadata?.display_name || ''
 
+  const TIE_SENTINEL = 'all tie'
+
   // Data state
   const [loading, setLoading]     = useState(true)
   const [poll, setPoll]           = useState(null)
@@ -61,6 +63,8 @@ export default function Voting({ onClose, onVoted }) {
   const [allGenres,    setAllGenres]    = useState([])
   const [allCountries, setAllCountries] = useState([])
   const [allGenders,   setAllGenders]   = useState([])
+  const [bannedBookIds, setBannedBookIds] = useState(new Set())
+
 
   const clearAll = () => {
     setGenreFilter([])
@@ -68,15 +72,42 @@ export default function Voting({ onClose, onVoted }) {
     setGenderFilter([])
   }
 
+  // Returns true if every voted book in the given tally received the same count
+  function isAllTieFromTally(tally) {
+    if (!tally) return false
+    const counts = Object.values(tally).reduce((acc, bookId) => {
+      acc[bookId] = (acc[bookId] || 0) + 1
+      return acc
+    }, {})
+    const vals = Object.values(counts)
+    return vals.length > 1 && vals.every(c => c === vals[0])
+  }
+
+  // Fetch the latest open poll for a given meeting ID
+  async function fetchLatestOpenPoll(pastMeetingId) {
+    const { data, error } = await supabase
+      .from('polls')
+      .select('id, round, tally, past_meeting_id, winner, status, created_at')
+      .eq('status', 'open')
+      .eq('past_meeting_id', pastMeetingId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (error) return null
+    return data || null
+  }
   // 1) Load open poll (now grabbing `tally`)
   useEffect(() => {
     async function fetchPoll() {
       setLoading(true)
       const { data: p, error: pe } = await supabase
         .from('polls')
-        .select('id,round,tally,past_meeting_id')
+        .select('id, round, tally, past_meeting_id, winner, status, created_at')
         .eq('status', 'open')
+        .order('created_at', { ascending: false })
+        .limit(1)
         .maybeSingle()
+
       if (pe && pe.code !== 'PGRST116') {
         setError('Hiba töltéskor: ' + pe.message)
       } else if (!p) {
@@ -92,108 +123,184 @@ export default function Voting({ onClose, onVoted }) {
 
   // 2) Load options + existing vote (no more poll_options table)
   useEffect(() => {
-    if (!poll) return
-    async function loadOptions() {
-      setLoading(true)
-      setError(null)
-      try {
-        let bookIds, bs
+    if (!poll) return;
 
-        if (round === 1) {
-          // first round: entire waitlist
-          const { data: all, error } = await supabase
+    async function loadOptions() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        // helper: full waitlist; optionally exclude current user's own books
+        const fetchFullWaitlist = async (excludeOwn) => {
+          let q = supabase
             .from('books')
             .select(`
               id, title, cover_url, author, page_count,
-              genre, country, author_gender, is_selected, added_by, release_year
+              genre, country, author_gender, release_year, user_id, is_selected
             `)
-          if (error) throw error
+            .eq('is_selected', false);
 
-          // filter out already-selected and your own adds
-          bs = all.filter(
-            b => !b.is_selected && b.added_by !== displayName
-          )
+          if (excludeOwn) q = q.neq('user_id', user.id);
 
+          const { data, error } = await q;
+          if (error) throw error;
+          return data || [];
+        };
+
+        // helpers for round types
+        const isTieRound   = r => r?.winner === TIE_SENTINEL;
+        const isLegacyNext = r => r?.winner === 'next round'; // legacy safety
+        const isNextRound  = r =>
+          isLegacyNext(r) || (!r?.winner && !isAllTieFromTally(r?.tally)); // computed fallback
+
+        let bs = [];
+        let banned = new Set();
+
+        if (round === 1) {
+          // Round 1: exclude own; no bans yet
+          bs = await fetchFullWaitlist(true);
         } else {
-          // round > 1: look up the *previous* round’s tally
-          const { data: prev, error: prevErr } = await supabase
+          // All completed rounds before this one (newest first)
+          const { data: prevRows, error: prevErr } = await supabase
             .from('polls')
-            .select('tally')
+            .select('id, round, winner, tally, created_at')
             .eq('past_meeting_id', poll.past_meeting_id)
-            .eq('round', round - 1)
-            .single()
-          if (prevErr) throw prevErr
+            .lt('round', round)
+            .eq('status', 'complete')
+            .order('created_at', { ascending: false });
 
-          // count votes per book
-          const mapping = prev?.tally || {}
-          const counts = Object.values(mapping).reduce((acc, bid) => {
-            acc[bid] = (acc[bid] || 0) + 1
-            return acc
-          }, {})
-          const sorted = Object.entries(counts).sort(([,a],[,b]) => b - a)
+          if (prevErr) throw prevErr;
 
-          let filterIds = []
-          if (sorted.length) {
-            const topCount = sorted[0][1]
-            // all books tied for top
-            filterIds = sorted.filter(([,c]) => c === topCount).map(([id]) => id)
-            if (filterIds.length === 1) {
-              // only one top → include second‐place as well
-              const secondCount = sorted[1]?.[1] || 0
-              const secondIds = sorted.filter(([,c]) => c === secondCount).map(([id]) => id)
-              filterIds = [filterIds[0], ...secondIds]
+          const rows = prevRows || [];
+          const prevLast = rows[0] || null;
+          const anyNextEver = rows.some(isNextRound); // first NEXT lifts "exclude own" forever
+          const excludeOwnNow = !anyNextEver;         // only exclude own until the first NEXT
+
+          if (!rows.length) {
+            // No closed rounds yet → behave like round 1
+            bs = await fetchFullWaitlist(true);
+          } else if (isTieRound(prevLast)) {
+            // ---- PREV = ALL TIE ----
+            // Show the "original selection" again (full waitlist).
+            // Exclude own only if we've never had a NEXT in this series.
+            bs = await fetchFullWaitlist(excludeOwnNow);
+
+            // Build consecutive tie chain (newest backwards) for banning user's previous picks
+            const tieChain = [];
+            for (const r of rows) {
+              if (isTieRound(r)) tieChain.push(r);
+              else break;
             }
-          }
 
-          // fetch only those books
-          if (filterIds.length) {
-            const { data, error } = await supabase
-              .from('books')
-              .select('id, title, cover_url, author, page_count, genre, country, author_gender, release_year')
-              .in('id', filterIds)
-            if (error) throw error
-            bs = data
+            if (tieChain.length) {
+              const tiePollIds = tieChain.map(r => r.id);
+              const { data: myPrevVotes } = await supabase
+                .from('votes')
+                .select('poll_id, book_id, created_at')
+                .in('poll_id', tiePollIds)
+                .eq('user_id', user.id);
+
+              const latestPerPoll = {};
+              for (const v of (myPrevVotes || [])) {
+                const cur = latestPerPoll[v.poll_id];
+                if (!cur || new Date(v.created_at) > new Date(cur.created_at)) {
+                  latestPerPoll[v.poll_id] = v;
+                }
+              }
+              for (const v of Object.values(latestPerPoll)) {
+                if (v?.book_id) banned.add(v.book_id);
+              }
+            }
+          } else if (isNextRound(prevLast)) {
+            // ---- PREV = NEXT ----
+            // Finalists from cumulative counts of [the NEXT + any immediately preceding ALL TIEs]
+            const segment = [prevLast];
+            for (let i = 1; i < rows.length; i++) {
+              if (isTieRound(rows[i])) segment.push(rows[i]);
+              else break;
+            }
+
+            // cumulate counts across the segment
+            const counts = {};
+            for (const r of segment) {
+              const t = r.tally || {};
+              Object.values(t).forEach(bookId => {
+                counts[bookId] = (counts[bookId] || 0) + 1;
+              });
+            }
+
+            // finalists: all top ties; if exactly one leader, include all 2nd-place ties
+            let filterIds = [];
+            const sorted = Object.entries(counts).sort(([, a], [, b]) => b - a);
+            if (sorted.length) {
+              const top = sorted[0][1];
+              filterIds = sorted.filter(([, c]) => c === top).map(([id]) => id);
+              if (filterIds.length === 1) {
+                // only include second group if it actually has > 0 cumulative votes
+                const second = sorted.find(([, c]) => c < top)?.[1] ?? 0;
+                if (second > 0) {
+                  filterIds = [
+                    filterIds[0],
+                    ...sorted.filter(([, c]) => c === second).map(([id]) => id),
+                  ];
+                }
+              }
+            }
+
+            // STRONG rule: do NOT broaden the set here (no "hadAnyVotes" fallback).
+            // If we somehow have no IDs (e.g., missing tallies), fall back to full waitlist (own allowed after NEXT).
+            if (!filterIds.length) {
+              bs = await fetchFullWaitlist(false);
+            } else {
+              const { data, error } = await supabase
+                .from('books')
+                .select('id, title, cover_url, author, page_count, genre, country, author_gender, release_year, user_id')
+                .in('id', filterIds);
+              if (error) throw error;
+              // After NEXT, allow own books
+              bs = data || [];
+            }
+
+            // After NEXT, no bans and no own-exclusion.
+            banned = new Set();
           } else {
-            bs = []
+            // Safety default: treat as pre-NEXT phase
+            bs = await fetchFullWaitlist(true);
           }
         }
 
-        // build opts array
+        // Build option objects
         const opts = bs.map(b => ({
           book_id: b.id,
-          book: { ...b, genres: b.genre }
-        }))
+          book: { ...b, genres: b.genre },
+        }));
 
-        setOptions(opts)
-        setAllGenres(
-          Array.from(new Set(opts.flatMap(o => o.book.genres))).sort()
-        )
-        setAllCountries(
-          Array.from(new Set(opts.map(o => o.book.country).filter(Boolean))).sort()
-        )
-        setAllGenders(
-          Array.from(new Set(opts.map(o => o.book.author_gender).filter(Boolean))).sort()
-        )
+        setOptions(opts);
+        setBannedBookIds(banned);
+        setAllGenres(Array.from(new Set(opts.flatMap(o => o.book.genres))).sort());
+        setAllCountries(Array.from(new Set(opts.map(o => o.book.country).filter(Boolean))).sort());
+        setAllGenders(Array.from(new Set(opts.map(o => o.book.author_gender).filter(Boolean))).sort());
 
-        // load this user's vote
+        // Load this user's current-round vote
         const { data: v, error: ve } = await supabase
           .from('votes')
           .select('book_id')
           .eq('poll_id', poll.id)
           .eq('user_id', user.id)
           .eq('round', round)
-          .maybeSingle()
-        if (!ve && v) setMyVote(v.book_id)
-
+          .maybeSingle();
+        if (!ve && v) setMyVote(v.book_id);
       } catch (err) {
-        console.error(err)
-        setError(err.message || 'Hiba a könyvek betöltésekor')
+        console.error(err);
+        setError(err.message || 'Hiba a könyvek betöltésekor');
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     }
-    loadOptions()
-  }, [poll, round, displayName, user.id])
+
+    loadOptions();
+  }, [poll, round, user.id]);
+
 
   // Build headless collections
   const genreCollection   = useMemo(() =>
@@ -244,19 +351,61 @@ export default function Voting({ onClose, onVoted }) {
   }, [options, genreFilter, countryFilter, genderFilter, sortField, sortAsc])
 
   // Cast vote
-  const castVote = async bookId => {
+  const castVote = async (bookId) => {
     if (!poll) return
+    if (bannedBookIds.has(bookId)) {
+      setNotification({ status: 'error', title: 'Ezt már kiválasztottad korábban ebben a szavazásban.' })
+      return
+    }
+
+    // Always re-check the latest open poll for this meeting
+    const latest = await fetchLatestOpenPoll(poll.past_meeting_id)
+    if (!latest) {
+      setNotification({ status: 'error', title: 'Nincs nyitott kör.' })
+      return
+    }
+    // keep local state in sync if we were stale
+    if (!poll || poll.id !== latest.id) {
+      setPoll(latest)
+      setRound(latest.round)
+    }
+
     setLoading(true)
     const { error: ve } = await supabase
       .from('votes')
-      .insert([{ poll_id: poll.id, user_id: user.id, book_id: bookId, round }])
+      .insert([{
+        poll_id: latest.id,
+        user_id: user.id,
+        book_id: bookId,
+        round: latest.round
+      }])
     setLoading(false)
+
     if (ve) {
       setNotification({ status: 'error', title: 'Hiba', description: ve.message })
     } else {
       setMyVote(bookId)
       setNotification({ status: 'success', title: 'Szavazat sikeres!' })
-      onVoted?.(poll.id, round, bookId)
+      onVoted?.(latest.id, latest.round, bookId)
+    }
+  }
+
+  // Undo vote
+  const handleUnvote = async () => {
+    if (!poll) return
+    setLoading(true)
+    const { error } = await supabase
+      .from('votes')
+      .delete()
+      .eq('poll_id', poll.id)
+      .eq('round', round)
+      .eq('user_id', user.id)
+    setLoading(false)
+    if (error) {
+      setNotification({ status: 'error', title: 'Hiba', description: error.message })
+    } else {
+      setMyVote(null)
+      setNotification({ status: 'success', title: 'Szavazat visszavonva' })
     }
   }
 
@@ -267,54 +416,85 @@ export default function Voting({ onClose, onVoted }) {
     return () => clearTimeout(t)
   }, [notification])
 
-  // Round stop
+  // Round stop — only writes tally; Admin.finalizeRound decides winner/next/all-tie
   useEffect(() => {
     if (!myVote || !poll) return;
 
     (async () => {
-      // 1) all votes for this poll & round
-      const { data: votes } = await supabase
-        .from('votes')
-        .select('user_id,book_id')
-        .eq('poll_id', poll.id)
-        .eq('round', round)
+      try {
+        // 1) Always re-check the latest OPEN poll for this meeting
+        const latest = await fetchLatestOpenPoll(poll.past_meeting_id);
+        if (!latest || latest.id !== poll.id) return; // stale client; don't touch an old row
 
-      // 2) fetch the single most‐recent meeting
-      const { data: lastMeet } = await supabase
-        .from('meetings')
-        .select('attendees')
-        .order('date', { ascending: false })
-        .order('time', { ascending: false })
-        .limit(1)
-        .single()
+        // 2) Collect all votes for this poll & round
+        const { data: votes, error: vErr } = await supabase
+          .from('votes')
+          .select('user_id, book_id')
+          .eq('poll_id', latest.id)
+          .eq('round', latest.round);
+        if (vErr) throw vErr;
 
-      const eligible = Array.isArray(lastMeet?.attendees)
-        ? lastMeet.attendees
-        : []
+        // 3) Confirm all eligible attendees have voted
+        const { data: theMeet, error: mErr } = await supabase
+          .from('meetings')
+          .select('attendees')
+          .eq('id', latest.past_meeting_id)
+          .single();
+        if (mErr) throw mErr;
 
-      // 3) have all eligible users voted?
-      const uniqueVoters = [...new Set(votes.map(v => v.user_id))]
-      if (uniqueVoters.length !== eligible.length) return
+        const eligible = Array.isArray(theMeet?.attendees) ? theMeet.attendees : [];
+        const uniqueVoters = [...new Set(votes.map(v => v.user_id))];
+        if (uniqueVoters.length !== eligible.length) return; // wait for others
 
-      // 4) build tally: user_id → book_id
-      const tally = votes.reduce((acc, { user_id, book_id }) => {
-        acc[user_id] = book_id
-        return acc
-      }, {})
+        // 4) Save THIS round's per-user tally (only if still open)
+        const tally = votes.reduce((acc, { user_id, book_id }) => {
+          acc[user_id] = book_id;
+          return acc;
+        }, {});
 
-      // 5) write into polls.tally
-      await supabase
-        .from('polls')
-        .update({ tally })
-        .eq('id', poll.id)
+        const { error: upErr } = await supabase
+          .from('polls')
+          .update({ tally })
+          .eq('id', latest.id)
+          .eq('status', 'open'); // don't overwrite a closed row
+        if (upErr) throw upErr;
 
-      // 6) notify
-      setNotification({
-        status: 'info',
-        title: 'Hamarosan eredményhirdetés',
+        setNotification({
+          status: 'info',
+          title: 'Mindenki szavazott – várd meg az eredményhirdetést az Admin oldalon.',
+        });
+        // Do NOT compute or write `winner` here — Admin.finalizeRound handles it.
+      } catch (e) {
+        setNotification({
+          status: 'error',
+          title: 'Nem sikerült menteni a kör eredményét.',
+          description: e?.message || String(e),
+        });
+      }
+    })();
+  }, [myVote, poll, round]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('polls-open-watch')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'polls',
+        filter: `past_meeting_id=eq.${poll?.past_meeting_id || ''}`
+      }, async payload => {
+        // whenever a poll changes for this meeting, pull the latest open one
+        const latest = await fetchLatestOpenPoll(payload.new?.past_meeting_id || poll?.past_meeting_id)
+        if (latest && (!poll || poll.id !== latest.id)) {
+          setPoll(latest)
+          setRound(latest.round)
+          setMyVote(null)
+        }
       })
-    })()
-  }, [myVote, poll, round])
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [poll?.past_meeting_id])
 
   if (loading) return <VStack py={10}><Spinner size="lg"/></VStack>
   if (error) {
@@ -359,9 +539,52 @@ export default function Voting({ onClose, onVoted }) {
 
       <Flex w="100%" mb={2} align="center" justify="center">
         {myVote ? (
-          <Text fontSize="md" color="red.600" fontStyle="italic">
-            Ebben a körben már szavaztál.
-          </Text>
+          <HStack spacing={3}>
+            <Text fontSize="md" color="red.600" fontStyle="italic">
+              Ebben a körben már szavaztál.
+            </Text>
+
+            <Popover.Root>
+              <Popover.Trigger asChild>
+                <Button
+                  size="xs"
+                  colorScheme="red"
+                  onClick={e => e.stopPropagation()}
+                >
+                  Szavazat visszavonása
+                </Button>
+              </Popover.Trigger>
+              <Portal>
+                <Popover.Positioner>
+                  <Popover.Content bg="red.50" p={4} borderRadius="md" w="260px">
+                    <Popover.Body>
+                      <Popover.Title fontSize="md" fontWeight="bold" color="red.800">
+                        Visszavonás megerősítése
+                      </Popover.Title>
+                      <Text fontSize="sm" color="red.700" my={2}>
+                        Biztosan visszavonod a szavazatod?
+                      </Text>
+                      <HStack justify="flex-end" spacing={2}>
+                        <Popover.CloseTrigger asChild>
+                          <Button size="xs">Vissza</Button>
+                        </Popover.CloseTrigger>
+                        <Button
+                          size="xs"
+                          colorScheme="red"
+                          onClick={async e => {
+                            e.stopPropagation()
+                            await handleUnvote()
+                          }}
+                        >
+                          Visszavonás
+                        </Button>
+                      </HStack>
+                    </Popover.Body>
+                  </Popover.Content>
+                </Popover.Positioner>
+              </Portal>
+            </Popover.Root>
+          </HStack>
         ) : (
           <Text fontSize="sm">
             Válassz egy könyvet a listából, majd kattints a „Szavazok” gombra.
@@ -379,10 +602,6 @@ export default function Voting({ onClose, onVoted }) {
             <Select.Control>
               <Select.Trigger><Select.ValueText placeholder="Műfaj" /></Select.Trigger>
             </Select.Control>
-            <Select.IndicatorGroup>
-              <Select.Indicator/>
-              <Select.ClearTrigger onClick={clearAll}/>
-            </Select.IndicatorGroup>
             <Portal>
                 <Select.Positioner>
                     <Select.Content asChild>
@@ -414,10 +633,6 @@ export default function Voting({ onClose, onVoted }) {
             <Select.Control>
               <Select.Trigger><Select.ValueText placeholder="Ország" /></Select.Trigger>
             </Select.Control>
-            <Select.IndicatorGroup>
-              <Select.Indicator/>
-              <Select.ClearTrigger onClick={clearAll}/>
-            </Select.IndicatorGroup>
             <Portal>
               <Select.Positioner>
                 <Select.Content asChild>
@@ -449,10 +664,6 @@ export default function Voting({ onClose, onVoted }) {
             <Select.Control>
               <Select.Trigger><Select.ValueText placeholder="Szerző neme" /></Select.Trigger>
             </Select.Control>
-            <Select.IndicatorGroup>
-              <Select.Indicator/>
-              <Select.ClearTrigger onClick={clearAll}/>
-            </Select.IndicatorGroup>
             <Portal>
               <Select.Positioner>
                 <Select.Content asChild>
@@ -523,10 +734,6 @@ export default function Voting({ onClose, onVoted }) {
             <Select.Control>
               <Select.Trigger><Select.ValueText placeholder="Rendezés" /></Select.Trigger>
             </Select.Control>
-            <Select.IndicatorGroup>
-              <Select.Indicator/>
-              <Select.ClearTrigger onClick={() => setSortField('title')}/>
-            </Select.IndicatorGroup>
             <Portal>
               <Select.Positioner>
                 <Select.Content asChild>
@@ -793,17 +1000,56 @@ export default function Voting({ onClose, onVoted }) {
                 {book.author} • {book.page_count} oldal
               </Text>
             </Box>
-            <Button
-              size="sm"
-              boxSize="40px"
-              p={0}
-              colorScheme={myVote === book_id ? 'green' : 'blue'}
-              disabled={!!myVote}
-              onClick={() => castVote(book_id)}
-              aria-label={myVote === book_id ? 'Szavaztál' : 'Szavazok'}
-            >
-              <FaCheck/>
-            </Button>
+            <Popover.Root>
+              <Popover.Trigger asChild>
+                <Button
+                  size="sm"
+                  px={3}
+                  minW="40px"
+                  colorScheme={myVote === book_id ? 'green' : 'blue'}
+                  disabled={!!myVote || bannedBookIds.has(book_id)}
+                  onClick={e => e.stopPropagation()}
+                  aria-label={
+                    bannedBookIds.has(book_id)
+                      ? 'Már kiválasztva'
+                      : (myVote === book_id ? 'Szavaztál' : 'Szavazok')
+                  }
+                >
+                  {bannedBookIds.has(book_id)
+                    ? 'Már kiválasztva'
+                    : (myVote === book_id ? <FaCheck/> : 'Szavazok')}
+                </Button>
+              </Popover.Trigger>
+              <Portal>
+                <Popover.Positioner>
+                  <Popover.Content bg="blue.50" p={4} borderRadius="md" w="300px">
+                    <Popover.Body>
+                      <Popover.Title fontSize="md" fontWeight="bold" color="blue.800">
+                        Szavazás megerősítése
+                      </Popover.Title>
+                      <Text fontSize="sm" color="blue.700" my={2}>
+                        Biztos, hogy leadod a szavazatod a <b>{book.title}</b> című könyvre?
+                      </Text>
+                      <HStack justify="flex-end" spacing={2}>
+                        <Popover.CloseTrigger asChild>
+                          <Button size="xs">Vissza</Button>
+                        </Popover.CloseTrigger>
+                        <Button
+                          size="xs"
+                          colorScheme="blue"
+                          onClick={async e => {
+                            e.stopPropagation()
+                            await castVote(book_id)
+                          }}
+                        >
+                          Leadom
+                        </Button>
+                      </HStack>
+                    </Popover.Body>
+                  </Popover.Content>
+                </Popover.Positioner>
+              </Portal>
+            </Popover.Root>
           </HStack>
         ))}
       </SimpleGrid>

@@ -23,7 +23,6 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
 
   useEffect(() => {
     if (isOpen && book?.id) {
-      // re-fetch the full book record so we always get current values
       supabase
         .from('books')
         .select('id, title, author, cover_url, genre, page_count, country, author_gender, user_id, added_by, message, release_year')
@@ -32,12 +31,10 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
         .then(({ data, error }) => {
           if (error) {
             console.error('Could not load book data:', error)
-            // fall back to whatever was passed
             setFormData(book)
           } else {
             setFormData({
               ...data,
-              // if genre is stored as an array, show it as a comma-separated string in the input
               genre: Array.isArray(data.genre) ? data.genre.join(', ') : data.genre,
               message: data.message || '',
               release_year: data.release_year || '',
@@ -51,92 +48,74 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
 
   const handleChange = (field) => (e) => {
     setFormData({ ...formData, [field]: e.target.value })
-    if (field === 'genre') {
-      setShowGenreWarning(false)
-    }
+    if (field === 'genre') setShowGenreWarning(false)
   }
 
   const handleImageUpload = async (e) => {
-    const file = e.target.files[0]
+    const file = e.target.files?.[0]
     if (!file || !user) return
 
     const filePath = `${user.id}/${Date.now()}_${file.name}`
-
-    const { error: uploadError } = await supabase.storage
-      .from('book-covers')
-      .upload(filePath, file)
-
+    const { error: uploadError } = await supabase.storage.from('book-covers').upload(filePath, file)
     if (uploadError) {
       console.error('❌ Feltöltési hiba:', uploadError.message)
       setFeedback(`❌ Képfeltöltési hiba: ${uploadError.message}`)
       return
     }
 
-    const { data: publicUrlData } = supabase.storage
-      .from('book-covers')
-      .getPublicUrl(filePath)
-
+    const { data: publicUrlData } = supabase.storage.from('book-covers').getPublicUrl(filePath)
     const imageUrl = publicUrlData?.publicUrl
-    setFormData((prev) => ({ ...prev, cover_url: imageUrl }))
+    setFormData(prev => ({ ...prev, cover_url: imageUrl }))
     setFeedback('✅ A képet sikeresen feltöltöttük.')
   }
 
   const handleSubmit = async () => {
-    // Basic validation
     if (!formData.title || !formData.author) {
       setFeedback('❌ A cím és a szerző nem elérhető.')
       return
     }
 
-    // Genre validation
     const rawGenre = Array.isArray(formData.genre)
       ? formData.genre.join(', ')
       : (formData.genre || '')
 
-    // Genre validation
     if (!rawGenre.trim()) {
       setShowGenreWarning(true)
       genreRef.current?.focus()
       return
     }
 
-    // fetch user display name
-    const { data: profile, error: profileError } = await supabase
-      .from('users')
-      .select('display_name')
-      .eq('id', user.id)
-      .single()
-    if (profileError) {
-      console.error('Nem tudtuk betölteni a profilt:', profileError.message)
-      setFeedback('❌ Profil betöltési hiba.')
-      return
-    }
-
-    // Build payload
-    const payload = {
-      title: formData.title,
-      author: formData.author,
+    // Build the common (editable) payload
+    const basePayload = {
+      title: (formData.title || '').trim(),
+      author: (formData.author || '').trim(),
       cover_url: formData.cover_url || '',
-      genre: rawGenre.split(',').map((g) => g.trim()),
-      page_count: formData.page_count ? parseInt(formData.page_count) : null,
+      genre: rawGenre.split(',').map(g => g.trim()).filter(Boolean),
+      page_count: formData.page_count ? Number(formData.page_count) : null,
       country: formData.country || '',
       author_gender: formData.author_gender || '',
-      release_year: formData.release_year ? parseInt(formData.release_year) : null,
-      user_id: user.id,
-      message: formData.message || '', 
-      added_by: formData.added_by ? formData.added_by : profile.display_name,
+      release_year: formData.release_year ? Number(formData.release_year) : null,
+      message: formData.message || '',
     }
 
-    // Upsert
+    const isEditing = !!formData.id
     let error
-    if (formData.id) {
+
+    if (isEditing) {
+      // 🔒 UPDATE: do NOT send added_by / user_id — keep original creator
       const res = await supabase
         .from('books')
-        .update(payload)
+        .update(basePayload)
         .eq('id', formData.id)
       error = res.error
     } else {
-      const res = await supabase.from('books').insert(payload)
+      // ➕ INSERT: set creator once (use UUID), optionally also user_id if you keep it
+      const insertPayload = {
+        ...basePayload,
+        added_by: user.id,   // 🔒 set once on insert
+        user_id: user.id,    // (optional) if your schema has this column
+      }
+      const res = await supabase.from('books').insert(insertPayload)
       error = res.error
     }
 
@@ -144,14 +123,12 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
       setFeedback(`❌ Nem tudtuk elmenteni a könyvet: ${error.message}`)
     } else {
       setFeedback('✅ Könyv mentve!')
-      // ← trigger parent refresh and clear selector
-      onBookAdded()
-      clearSearch()
-      // then close modal
+      onBookAdded?.()
+      clearSearch?.()
       setTimeout(() => {
-        onClose()
+        onClose?.()
         setFeedback('')
-      }, 1000)
+      }, 800)
     }
   }
 
@@ -165,9 +142,7 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
       display="flex"
       alignItems="center"
       justifyContent="center"
-      onClick={(e) => {
-        if (e.target === backdropRef.current) onClose()
-      }}
+      onClick={(e) => { if (e.target === backdropRef.current) onClose() }}
     >
       <Box
         bg="white"
@@ -192,23 +167,15 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
 
           <Input type="file" accept="image/*" onChange={handleImageUpload} />
 
-          <Input
-            value={formData.title}
-            onChange={handleChange('title')}
-            placeholder="Cím"
-          />
-          <Input
-            value={formData.author}
-            onChange={handleChange('author')}
-            placeholder="Szerző"
-          />
+          <Input value={formData.title || ''} onChange={handleChange('title')} placeholder="Cím" />
+          <Input value={formData.author || ''} onChange={handleChange('author')} placeholder="Szerző" />
 
           <Box position="relative">
             <Input
               ref={genreRef}
               value={formData.genre || ''}
               onChange={handleChange('genre')}
-              placeholder="Műfaj(ok) - veszzőkkel elválasztva"
+              placeholder="Műfaj(ok) – vesszőkkel elválasztva"
             />
             {showGenreWarning && (
               <Box
@@ -230,39 +197,14 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
             )}
           </Box>
 
-          <Input
-            value={formData.page_count || ''}
-            type="number"
-            onChange={handleChange('page_count')}
-            placeholder="Oldalszám"
-          />
-          <Input
-            value={formData.country || ''}
-            onChange={handleChange('country')}
-            placeholder="Ország"
-          />
-          <Input
-            value={formData.author_gender || ''}
-            onChange={handleChange('author_gender')}
-            placeholder="A szerző neme (pl. férfi, nő, egyéb)"
-          />
-          <Input
-            value={formData.release_year || ''}
-            onChange={handleChange('release_year')}
-            placeholder="Kiadási év"
-            type="number"
-          />
-          <Textarea
-            value={formData.message}
-            onChange={handleChange('message')}
-            placeholder="Miért ajánlod olvasására? (opcionális)"
-          />
+          <Input value={formData.page_count || ''} type="number" onChange={handleChange('page_count')} placeholder="Oldalszám" />
+          <Input value={formData.country || ''} onChange={handleChange('country')} placeholder="Ország" />
+          <Input value={formData.author_gender || ''} onChange={handleChange('author_gender')} placeholder="A szerző neme (pl. férfi, nő, egyéb)" />
+          <Input value={formData.release_year || ''} onChange={handleChange('release_year')} placeholder="Kiadási év" type="number" />
+          <Textarea value={formData.message || ''} onChange={handleChange('message')} placeholder="Miért ajánlod olvasására? (opcionális)" />
 
           {feedback && (
-            <Text
-              fontSize="sm"
-              color={feedback.startsWith('✅') ? 'green.500' : 'red.500'}
-            >
+            <Text fontSize="sm" color={feedback.startsWith('✅') ? 'green.500' : 'red.500'}>
               {feedback}
             </Text>
           )}
@@ -270,7 +212,7 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
           <Box display="flex" justifyContent="flex-end" gap={3}>
             <Button onClick={onClose}>Vissza</Button>
             <Button colorScheme="blue" onClick={handleSubmit}>
-              {formData.id ? 'Mentés' : 'Várolistára'}
+              {formData.id ? 'Mentés' : 'Várólistára'}
             </Button>
           </Box>
         </VStack>
