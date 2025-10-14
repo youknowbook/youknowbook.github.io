@@ -26,7 +26,7 @@ export default function UpdateCredentials() {
 
     const { data, error: updErr } = await supabase.auth.updateUser(
         { email: newEmail, password: newPassword },
-        { emailRedirectTo: `${window.location.origin}/profile` }
+        { emailRedirectTo: `${window.location.origin}${import.meta.env.BASE_URL}profile` }
     )
     if (updErr) {
         setError(updErr.message)
