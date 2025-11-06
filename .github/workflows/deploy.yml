@@ -26,6 +26,7 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_GOOGLE_BOOKS_API_KEY: ${{ secrets.VITE_GOOGLE_BOOKS_API_KEY }}
+          VITE_SECRET_PASSCODE: ${{ secrets.VITE_SECRET_PASSCODE }}
 
       - name: Copy index.html to 404.html (for SPA routing)
         run: cp dist/index.html dist/404.html
