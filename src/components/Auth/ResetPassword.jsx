@@ -22,14 +22,25 @@ export default function ResetPassword() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error || !session) {
-        setError('Lejárt vagy érvénytelen link.')
-      } else {
+    const run = async () => {
+      const params = new URLSearchParams(window.location.search)
+      const code = params.get('code')
+
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code)
+        if (error) return setError('Lejárt vagy érvénytelen link.')
         setReady(true)
+        return
       }
-    })
+
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) setError('Lejárt vagy érvénytelen link.')
+      else setReady(true)
+    }
+
+    run()
   }, [])
+
 
   const handleSubmit = async (e) => {
     e.preventDefault()

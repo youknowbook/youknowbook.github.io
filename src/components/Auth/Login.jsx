@@ -56,7 +56,7 @@ export default function Login() {
       return
     }
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`
+      redirectTo: `${window.location.origin}${import.meta.env.BASE_URL}reset-password`
     })
     if (resetError) setError(resetError.message)
     else setSuccess('✅ Nézd meg az emaileidet! Link elküldve.')
