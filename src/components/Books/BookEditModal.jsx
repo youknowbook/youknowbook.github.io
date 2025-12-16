@@ -111,7 +111,9 @@ export default function BookEditModal({ book, isOpen, onClose, onBookAdded, clea
     } else {
       // ➕ INSERT: set creator once (use UUID), optionally also user_id if you keep it
       const insertPayload = {
-        ...basePayload
+        ...basePayload,
+        //added_by: user.id,   // 🔒 set once on insert
+        user_id: user.id,    // (optional) if your schema has this column
       }
       const res = await supabase.from('books').insert(insertPayload)
       error = res.error
