@@ -85,7 +85,8 @@ function buildBackground(colors, method, ownColor) {
 }
 
 export default function Dashboard() {
-  const { user } = useAuth()
+  const { user, userData } = useAuth()
+  const isAdmin = !!userData?.is_admin
 
   // raw meetings & current index
   const [meetings, setMeetings] = useState([])
@@ -103,7 +104,6 @@ export default function Dashboard() {
   const meeting = displayMeetings[currentIdx] || {}
 
   // Other component state
-  const [isAdmin, setIsAdmin] = useState(false)
   const [questions, setQuestions] = useState([])
   const [showQ, setShowQ] = useState(false)
   const [newQ, setNewQ] = useState('')
@@ -429,6 +429,40 @@ export default function Dashboard() {
       setAttendees([])
     }
   }
+
+  // Admin remove attendee
+  const removeAttendee = async (removeUserId) => {
+    if (!isAdmin || meeting.placeholder) return
+
+    const curr = Array.isArray(meeting.attendees) ? meeting.attendees : []
+    const newIds = curr.filter((id) => id !== removeUserId)
+
+    const { data: updatedMeeting, error } = await supabase
+      .from('meetings')
+      .update({ attendees: newIds })
+      .eq('id', meeting.id)
+      .select('attendees')
+      .single()
+
+    if (error) {
+      console.error('Admin remove attendee failed', error)
+      return
+    }
+
+    const ids = updatedMeeting.attendees || []
+
+    // update meetings list so `meeting` (derived) refreshes
+    setMeetings((ms) =>
+      ms.map((m) => (m.id === meeting.id ? { ...m, attendees: ids } : m))
+    )
+
+    // update overlay list immediately
+    setAttendees((prev) => prev.filter((u) => u.id !== removeUserId))
+
+    // if admin removed themselves, reflect it
+    if (removeUserId === user.id) setIsAttending(false)
+  }
+
 
   // derive the last meeting by date
   const lastMeeting = useMemo(() => {
@@ -901,12 +935,29 @@ export default function Dashboard() {
                 </HStack>
                 <VStack align="stretch" spacing="3" pt="2">
                   {attendees.map((u) => (
-                    <HStack key={u.id} spacing="3">
+                    <HStack key={u.id} spacing="3" w="full">
                       <Avatar.Root size="md">
                         <Avatar.Fallback name={u.display_name} />
                         <Avatar.Image src={u.profile_picture} />
                       </Avatar.Root>
+
                       <Text fontSize="md">{u.display_name}</Text>
+
+                      <Box flex="1" />
+
+                      {isAdmin && (
+                        <IconButton
+                          aria-label="Eltávolítás"
+                          size="xs"
+                          variant="ghost"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            removeAttendee(u.id)
+                          }}
+                        >
+                          <FaTimes />
+                        </IconButton>
+                      )}
                     </HStack>
                   ))}
                 </VStack>
