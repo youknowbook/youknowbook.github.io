@@ -86,7 +86,7 @@ function buildBackground(colors, method, ownColor) {
 
 export default function Dashboard() {
   const { user, userData } = useAuth()
-  const isAdmin = !!userData?.is_admin
+  const isAdmin = userData?.is_admin
 
   // raw meetings & current index
   const [meetings, setMeetings] = useState([])
