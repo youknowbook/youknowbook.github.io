@@ -87,6 +87,8 @@ function buildBackground(colors, method, ownColor) {
 export default function Dashboard() {
   const { user, userData } = useAuth()
   const isAdmin = userData?.is_admin
+  const TIE_SENTINEL = 'all tie'
+  const NEXT_ROUND_SENTINEL = 'next round'
 
   // raw meetings & current index
   const [meetings, setMeetings] = useState([])
@@ -120,10 +122,6 @@ export default function Dashboard() {
   const [openPoll, setOpenPoll] = useState(false) 
   const [showMeetingTime, setShowMeetingTime] = useState(false)
 
-  const today = new Date()
-  const defaultYear = today.getFullYear()
-  const defaultMonth = today.getMonth() + 1
-
   const [openRoundId, setOpenRoundId] = useState(null)
   const [latestWinnerId, setLatestWinnerId] = useState(null)
   const [winnerBook,       setWinnerBook]   = useState(null)
@@ -149,11 +147,12 @@ export default function Dashboard() {
   // ---- new: do we have a poll started? ---- 
     useEffect(() => { 
       async function fetchOpenPoll() { 
-        const { data, error } = await supabase 
+        const { data } = await supabase 
           .from('polls') 
           .select('id') 
           .eq('status', 'open') 
-          .single() 
+          .limit(1)
+          .maybeSingle() 
         setOpenPoll(!!data) 
       } 
       fetchOpenPoll() 
@@ -271,12 +270,14 @@ export default function Dashboard() {
     async function loadLatestWinner() {
       const { data, error } = await supabase
         .from('polls')
-        .select('winner')
+        .select('winner, created_at')
         .eq('status', 'complete')
-        .order('round', { ascending: false })
+        .not('winner', 'is', null)
+        .not('winner', 'in', `("${TIE_SENTINEL}","${NEXT_ROUND_SENTINEL}")`)
+        .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
-      if (!error && data?.winner && data.winner !== 'next round') {
+      if (!error && data?.winner) {
         setLatestWinnerId(data.winner)
       }
     }

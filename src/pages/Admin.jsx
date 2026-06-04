@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import {
   Box,
   Button,
@@ -24,6 +24,7 @@ import PollResults from '../components/Dashboard/PollResults'
 
 export default function Admin() {
   const TIE_SENTINEL = 'all tie'
+  const NEXT_ROUND_SENTINEL = 'next round'
 
   // Books & meeting form
   const [books, setBooks] = useState([])
@@ -80,22 +81,7 @@ export default function Admin() {
     setHistoryIndex(0)
   }
 
-  // Fetch books + meetings
-  useEffect(() => {
-    fetchAvailableBooks()
-    fetchMeetings()
-    loadRounds()
-  }, [])
-
-  async function fetchAvailableBooks() {
-    const { data, error } = await supabase
-      .from('books')
-      .select('id, title, author')
-      .eq('is_selected', false)
-    if (!error) setBooks(data || [])
-  }
-
-  async function fetchMeetings() {
+  const fetchMeetings = useCallback(async () => {
     const { data, error } = await supabase
       .from('meetings')
       .select('id, location, date, time, is_active, books(id, author, title)')
@@ -106,35 +92,40 @@ export default function Admin() {
         .map(m => m.books?.id)
         .filter(Boolean);
       setUsedBookIds(ids);
+      return ids;
     }
-  }
+    return [];
+  }, [])
 
   // Filter books
-  async function fetchAvailableBooks() {
+  const fetchAvailableBooks = useCallback(async (excludedIds = usedBookIds) => {
     let query = supabase
       .from('books')
       .select('id, title, author')
       .eq('is_selected', false);
 
-    if (usedBookIds.length > 0) {
+    if (excludedIds.length > 0) {
       // Supabase JS client accepts an array for an “in” filter
-      query = query.not('id', 'in', usedBookIds);
+      query = query.not('id', 'in', excludedIds);
     }
 
     const { data, error } = await query;
     if (!error) {
       setBooks(data || []);
     }
-  }
+  }, [usedBookIds])
 
   useEffect(() => {
     async function init() {
       await fetchMeetings();
       await loadRounds();
-      await fetchAvailableBooks();
     }
     init();
-  }, []);
+  }, [fetchMeetings]);
+
+  useEffect(() => {
+    fetchAvailableBooks(usedBookIds)
+  }, [fetchAvailableBooks, usedBookIds]);
 
   // Cancel message timers
   useEffect(() => { if (success) setTimeout(() => setSuccess(''), 3000) }, [success])
@@ -199,14 +190,82 @@ export default function Admin() {
       .update({ is_selected: true })
       .eq('id', selectedBooks[0])
     setSuccess('✅ Kész az esemény!')
-    await fetchMeetings()
-    await fetchAvailableBooks()
+    const ids = await fetchMeetings()
+    await fetchAvailableBooks(ids)
     setSelectedBooks([])
     setLocation('')
     setDate('')
     setTime('')
     setUpcomingIndex(0)
     setPastIndex(0)
+  }
+
+  const handleForceUpcomingBook = async () => {
+    setSuccess('')
+    setErrorMsg('')
+
+    const bookId = selectedBooks[0]
+    if (!bookId) {
+      setErrorMsg('❌ Válassz egy könyvet!')
+      return
+    }
+
+    const past = meetings
+      .filter(m => !m.is_active)
+      .sort((a,b) => new Date(b.date) - new Date(a.date))
+
+    if (!past.length) {
+      setErrorMsg('❌ Nincs korábbi esemény, amihez az eredményt kötni lehetne.')
+      return
+    }
+
+    const { data: openPolls, error: openErr } = await supabase
+      .from('polls')
+      .select('id')
+      .eq('status', 'open')
+
+    if (openErr) {
+      setErrorMsg('❌ Nem sikerült ellenőrizni a szavazást: ' + openErr.message)
+      return
+    }
+
+    const openPollIds = (openPolls || []).map(p => p.id)
+
+    if (openPollIds.length) {
+      const { error: closeErr } = await supabase
+        .from('polls')
+        .update({
+          status: 'complete',
+          winner: bookId,
+          tally: {},
+        })
+        .in('id', openPollIds)
+
+      if (closeErr) {
+        setErrorMsg('❌ A nyitott szavazás lezárása sikertelen: ' + closeErr.message)
+        return
+      }
+    } else {
+      const { error: insertErr } = await supabase
+        .from('polls')
+        .insert([{
+          past_meeting_id: past[0].id,
+          round: 1,
+          status: 'complete',
+          winner: bookId,
+          tally: {},
+        }])
+
+      if (insertErr) {
+        setErrorMsg('❌ A könyv kijelölése sikertelen: ' + insertErr.message)
+        return
+      }
+    }
+
+    setOpenPoll(null)
+    setShowResults(false)
+    setFinalResult(null)
+    setSuccess('✅ Ez lesz a következő könyv.')
   }
 
   // Voting on past meeting
@@ -354,8 +413,6 @@ export default function Admin() {
     try {
       if (!openPoll) return;
 
-      const TIE_SENTINEL = 'all tie';
-
       // 1) Close the current poll row first (no winner yet)
       await supabase
         .from('polls')
@@ -475,17 +532,17 @@ export default function Admin() {
           // >= 50%
           winnerValue = topId;
         } else if (topCount > secondCount) {
-          winnerValue = 'next round';
+          winnerValue = NEXT_ROUND_SENTINEL;
         } else {
-          winnerValue = 'next round'; // tie for lead but not “all tie”
+          winnerValue = NEXT_ROUND_SENTINEL; // tie for lead but not “all tie”
         }
       }
 
       // 7) Save winner on the recently closed round
       await supabase.from('polls').update({ winner: winnerValue }).eq('id', cur.id);
 
-      // 8) Open next round only if we didn’t find a final book winner
-      if (typeof winnerValue === 'string') {
+      // 8) Open next round only for sentinel outcomes, not for string book IDs.
+      if (winnerValue === TIE_SENTINEL || winnerValue === NEXT_ROUND_SENTINEL) {
         await supabase.from('polls').insert([{
           past_meeting_id: cur.past_meeting_id,
           round: (cur.round || 1) + 1,
@@ -570,7 +627,7 @@ export default function Admin() {
           <Select.HiddenSelect aria-label="Válassz egy könyvet!" />
           <Select.Label>Válassz egy könyvet!</Select.Label>
           <Select.Control>
-            <Select.Trigger onClick={fetchAvailableBooks}>
+            <Select.Trigger onClick={() => fetchAvailableBooks()}>
               <Select.ValueText placeholder="Válassz egy könyvet!" />
             </Select.Trigger>
             <Select.IndicatorGroup>
@@ -596,6 +653,9 @@ export default function Admin() {
         <Input type="time" value={time} onChange={e => setTime(e.target.value)} />
         <Button colorScheme="blue" onClick={handleSubmit}>
           Esemény elkészítése
+        </Button>
+        <Button variant="outline" colorScheme="teal" onClick={handleForceUpcomingBook}>
+          Következő könyv kijelölése
         </Button>
         {success && <Text color="green.500">{success}</Text>}
         {errorMsg && <Text color="red.500">{errorMsg}</Text>}

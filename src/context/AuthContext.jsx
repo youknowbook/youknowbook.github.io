@@ -10,13 +10,20 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      const authUser = session?.user ?? null
-      setUser(authUser)
-      setLoading(false)
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        const authUser = session?.user ?? null
+        setUser(authUser)
 
-      if (authUser) {
-        fetchUserData(authUser.id)
+        if (authUser) {
+          fetchUserData(authUser.id)
+        }
+      } catch (error) {
+        console.error('Nem tudtuk betölteni a Supabase munkamenetet:', error.message)
+        setUser(null)
+        setUserData(null)
+      } finally {
+        setLoading(false)
       }
     }
 
