@@ -39,6 +39,7 @@ import { supabase } from '../api/supabaseClient'
 import { useAuth } from '../context/AuthContext'
 import Voting from '../components/Dashboard/Voting'
 import MeetingTime from '../components/Dashboard/MeetingTime'
+import MeetingRating from '../components/Dashboard/MeetingRating'
 
 // Helper to average an array of hex colors
 function averageHex(colors) {
@@ -103,7 +104,7 @@ export default function Dashboard() {
     ? [...meetings, { placeholder: true }]
     : meetings
 
-  const meeting = displayMeetings[currentIdx] || {}
+  const meeting = useMemo(() => meetings[currentIdx] || { placeholder: true }, [meetings, currentIdx])
 
   // Other component state
   const [questions, setQuestions] = useState([])
@@ -118,6 +119,40 @@ export default function Dashboard() {
   const [attendees, setAttendees] = useState([])
   const [isAttending, setIsAttending] = useState(false)
   const [showAtt, setShowAtt] = useState(false)
+  const [members, setMembers] = useState([])
+  const [selectedMember, setSelectedMember] = useState('')
+  const [attendeeError, setAttendeeError] = useState('')
+  const [addingAttendee, setAddingAttendee] = useState(false)
+
+  useEffect(() => {
+    setSelectedMember('')
+    setAttendeeError('')
+    if (!isAdmin || !showAtt) return
+    let cancelled = false
+    supabase.from('users').select('id, display_name').order('display_name').then(({ data, error }) => {
+      if (cancelled) return
+      if (error) setAttendeeError('A tagok betöltése sikertelen.')
+      else setMembers(data || [])
+    })
+    return () => { cancelled = true }
+  }, [isAdmin, showAtt, meeting.id])
+
+  const addAttendee = async () => {
+    if (!isAdmin || !selectedMember || addingAttendee || !meeting.id) return
+    setAddingAttendee(true)
+    setAttendeeError('')
+    const meetingId = meeting.id
+    const { data: ids, error } = await supabase.rpc('admin_add_meeting_attendee', {
+      p_meeting_id: String(meetingId), p_user_id: selectedMember,
+    })
+    setAddingAttendee(false)
+    if (error) {
+      setAttendeeError(`Nem sikerült hozzáadni a tagot: ${error.message}`)
+      return
+    }
+    setMeetings(ms => ms.map(m => m.id === meetingId ? { ...m, attendees: ids } : m))
+    setSelectedMember('')
+  }
   const [showVoting, setShowVoting] = useState(false)
   const [openPoll, setOpenPoll] = useState(false) 
   const [showMeetingTime, setShowMeetingTime] = useState(false)
@@ -142,7 +177,7 @@ export default function Dashboard() {
 
   // Helper to parse stored notes
   const parseNotes = (raw) =>
-    raw.map((item) => (typeof item === 'string' ? JSON.parse(item) : item))
+    (raw || []).map((item) => (typeof item === 'string' ? JSON.parse(item) : item))
 
   // ---- new: do we have a poll started? ---- 
     useEffect(() => { 
@@ -179,7 +214,8 @@ export default function Dashboard() {
 
   // Load details (questions, colors, attendees) when `meeting` changes
   useEffect(() => {
-    if (!user || !meeting || meeting.placeholder) return;
+    if (!user || !meeting.id || !meeting.books?.id || meeting.placeholder) return;
+    let cancelled = false;
 
     (async () => {
       // --- Questions ---
@@ -191,10 +227,11 @@ export default function Dashboard() {
           .from('users')
           .select('id, display_name')
           .in('id', uids);
-        users.forEach((u) => {
+        (users || []).forEach((u) => {
           nameMap[u.id] = u.display_name;
         });
       }
+      if (cancelled) return;
       setQuestions(
         raw.map((q) => ({
           ...q,
@@ -211,9 +248,10 @@ export default function Dashboard() {
         console.error('Failed to load public mood colors', pubErr);
       }
       // Map and filter out any pure white entries
+      if (cancelled) return;
       const all = (publicBooks || [])
         .map(r => {
-          const raw = r.mood_color.trim().toLowerCase();
+          const raw = (r.mood_color || 'ffffff').trim().toLowerCase();
           return raw.startsWith('#') ? raw : `#${raw}`;
         })
         .filter(c => c !== '#ffffff');
@@ -223,7 +261,7 @@ export default function Dashboard() {
 
       // --- Your own color ---
       const mine = publicBooks?.find((r) => r.user_id === user.id);
-      const own = mine
+      const own = mine?.mood_color
         ? mine.mood_color.startsWith('#')
           ? mine.mood_color
           : `#${mine.mood_color}`
@@ -243,6 +281,7 @@ export default function Dashboard() {
       if (myErr && myErr.code !== 'PGRST116') {
         console.error('Failed to load your color setting', myErr);
       }
+      if (cancelled) return;
       if (myRow?.mood_color_setting) {
         setMethod(myRow.mood_color_setting);
       }
@@ -256,13 +295,15 @@ export default function Dashboard() {
           .from('users')
           .select('id, display_name, profile_picture')
           .in('id', aIds);
-        setAttendees(us);
+        if (cancelled) return;
+        setAttendees(us || []);
         setIsAttending(aIds.includes(user.id));
       } else {
         setAttendees([]);
         setIsAttending(false);
       }
     })();
+    return () => { cancelled = true };
   }, [user, meeting]);
 
   //Load winner
@@ -645,7 +686,7 @@ export default function Dashboard() {
             left="4"
             transform="translateY(-50%)"
             onClick={prev}
-            isDisabled={currentIdx === 0}
+            disabled={currentIdx === 0}
             aria-label="Előző esemény"
             opacity={currentIdx === 0 ? 0.4 : 0.9}
             rounded="full"
@@ -764,7 +805,7 @@ export default function Dashboard() {
             right="4"
             transform="translateY(-50%)"
             onClick={next}
-            isDisabled={
+            disabled={
               currentIdx === displayMeetings.length - 1
             }
             aria-label="Következő esemény"
@@ -877,8 +918,13 @@ export default function Dashboard() {
                 </>
               )}
 
+              {!meeting.is_active && meeting.date && new Date(`${meeting.date}T${meeting.time || '00:00'}`) <= new Date() && (
+                <MeetingRating key={meeting.id} meetingId={meeting.id} attendees={meeting.attendees} />
+              )}
               {!meeting.is_active && (
-                // Past meeting avatars with overflow
+                // Always provide a button, including when there are no attendees yet.
+                <Box>
+                <Button variant="outline" size="sm" onClick={() => setShowAtt(true)}>Résztvevők ({attendees.length})</Button>
                 <Menu.Root>
                   <Menu.Trigger asChild>
                     <AvatarGroup spacing="-3" mt="4" cursor="pointer" onClick={() => setShowAtt(true)}>
@@ -896,6 +942,7 @@ export default function Dashboard() {
                     </AvatarGroup>
                   </Menu.Trigger>
                 </Menu.Root>
+                </Box>
               )}
             </>
           )}
@@ -934,6 +981,20 @@ export default function Dashboard() {
                     Bezárás
                   </Button>
                 </HStack>
+                {isAdmin && (
+                  <VStack align="stretch" w="full" gap={2}>
+                    <label htmlFor="meeting-member">Tag hozzáadása</label>
+                    <select id="meeting-member" value={selectedMember} disabled={addingAttendee}
+                      onChange={e => setSelectedMember(e.target.value)} style={{ width: '100%', padding: 8, border: '1px solid #ccc', borderRadius: 4 }}>
+                      <option value="">Válassz a tagok közül…</option>
+                      {members.filter(member => !(meeting.attendees || []).includes(member.id)).map(member => (
+                        <option key={member.id} value={member.id}>{member.display_name}</option>
+                      ))}
+                    </select>
+                    <Button size="sm" onClick={addAttendee} disabled={!selectedMember || addingAttendee}>Hozzáadás</Button>
+                    {attendeeError && <Text role="alert" color="red.600" fontSize="sm">{attendeeError}</Text>}
+                  </VStack>
+                )}
                 <VStack align="stretch" spacing="3" pt="2">
                   {attendees.map((u) => (
                     <HStack key={u.id} spacing="3" w="full">

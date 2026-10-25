@@ -25,4 +25,8 @@ dist-ssr
 
 # Ignore environment files
 .env
-scripts/
+scripts/*
+!scripts/check-google-books.mjs
+!scripts/google-books.test.mjs
+!scripts/members.test.mjs
+!scripts/timeline.test.mjs

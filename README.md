@@ -103,3 +103,6 @@ Kövesd a [Chakra UI segítségét](https://chakra-ui.com/docs/components/concep
 ## 📝 Licensz
 
 This project is licensed under the MIT License.
+## QoL updates and database rollout
+
+See [the rollout and troubleshooting guide](docs/quality-of-life.md) for the required Supabase migration, Google Books diagnostics, and verification commands.
