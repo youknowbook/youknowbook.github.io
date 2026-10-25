@@ -38,6 +38,7 @@ export default function BookDetailModal({ book, isOpen, onClose }) {
           message,
           user_id,
           added_by,
+          added_when,
           message
         `)
         .eq('id', book.id)
@@ -106,6 +107,9 @@ export default function BookDetailModal({ book, isOpen, onClose }) {
         p={6}
         borderRadius="md"
         maxW="lg"
+        maxH="90dvh"
+        overflowY="auto"
+        mx={4}
         w="full"
         boxShadow="2xl"
         onClick={e => e.stopPropagation()}
@@ -140,6 +144,7 @@ export default function BookDetailModal({ book, isOpen, onClose }) {
               {details.release_year != null && (
                 <Text fontSize="sm">Kiadás éve: {details.release_year}</Text> 
               )}
+              {details.added_when && <Text fontSize="sm">Hozzáadva: {new Date(details.added_when).toLocaleDateString('hu-HU')}</Text>}
               {details.country && (
                 <Text fontSize="sm">Ország: {details.country}</Text>
               )}

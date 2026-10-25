@@ -93,7 +93,7 @@ export default function BookMetaModal({
       onClick={e => e.target === backdropRef.current && onClose()}
     >
       <Box
-        bg="white" p={6} borderRadius="md" width="320px"
+        bg="white" p={6} borderRadius="md" width="min(420px, calc(100vw - 32px))" maxH="90dvh" overflowY="auto"
         onClick={e => e.stopPropagation()}
       >
         <VStack spacing={4} align="stretch">
@@ -135,10 +135,10 @@ export default function BookMetaModal({
             />
           </Box>
 
-          <HStack justify="flex-end" spacing={3} mt={4}>
+          <HStack justify="flex-end" gap={3} mt={4} flexWrap="wrap">
             {isAdmin && (
               <Popover.Root>
-                <Popover.Trigger>
+                <Popover.Trigger asChild>
                   <Button variant="outline" colorScheme="red">
                     Visszarakás
                   </Button>

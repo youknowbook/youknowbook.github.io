@@ -742,7 +742,7 @@ export default function Admin() {
               )}
 
               <HStack justify="center" spacing={4}>
-                <Button colorScheme="red" onClick={handleStopVoting}>
+                <Button variant="subtle" colorPalette="gray" onClick={handleStopVoting}>
                   Szavazás leállítása
                 </Button>
                 {/* Only show "Eredményhirdetés" once tally exists */}
