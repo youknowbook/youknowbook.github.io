@@ -2,13 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Box, Flex, Heading, Text, Spinner, AspectRatio, Image  } from '@chakra-ui/react';
 import { supabase } from '../api/supabaseClient';
 import { ComposableMap, Geographies, Geography, Marker } from 'react-simple-maps';
-import { scaleSequential } from 'd3-scale';
-import { interpolateBlues, interpolateRainbow } from 'd3-scale-chromatic';
 import { geoCentroid } from 'd3-geo';
 import countries from 'i18n-iso-countries';
 import huLocale from 'i18n-iso-countries/langs/hu.json';
 import enLocale from 'i18n-iso-countries/langs/en.json';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
+import BookTimeline from '../components/Stats/BookTimeline'
 
 // Register Hungarian and English locales for country translations
 countries.registerLocale(huLocale);
@@ -55,7 +54,7 @@ const Stats = () => {
       const { data: ub, error: ubErr } = await supabase
         .from('user_books')
         .select('book_id, mood_color')
-        .eq('user_id', user.id);
+        .eq('user_id', user?.id);
       if (ubErr) console.error(ubErr);
       else setUserColors(Object.fromEntries(ub.map(u => [u.book_id, u.mood_color])));
 
@@ -68,7 +67,7 @@ const Stats = () => {
       if (meetErr) console.error('Failed to load past meetings', meetErr);
 
       // 3b) build an array of book IDs in read order
-      const orderedIds = pastMeetings.map(m => m.book_id);
+      const orderedIds = [...new Set((pastMeetings || []).map(m => m.book_id))];
 
       // now you have both `booksData` (all selected books) and `orderedIds`
       setOrderedBookIds(orderedIds);
@@ -88,25 +87,16 @@ const Stats = () => {
   }
 
   // Aggregations
-  const timelineData = Object.entries(
-    books.reduce((acc, { release_year }) => {
-      acc[release_year] = (acc[release_year] || 0) + 1;
-      return acc;
-    }, {})
-  )
-    .map(([year, count]) => ({ year: +year, count }))
-    .sort((a, b) => a.year - b.year);
-
   const genreData = Object.entries(
     books.reduce((acc, { genre }) => {
       if (Array.isArray(genre)) genre.forEach(g => (acc[g] = (acc[g] || 0) + 1));
       return acc;
     }, {})
-  ).map(([genre, count]) => ({ genre, count }));
+  ).map(([genre, count]) => ({ genre, count })).sort((a, b) => b.count - a.count || a.genre.localeCompare(b.genre, 'hu'));
   const maxGenre = Math.max(0, ...genreData.map(d => d.count));
 
   // Map constants
-  const boxSize = 100;         // increased from 40 to 100 for larger covers
+  const boxSize = 64;         // increased from 40 to 100 for larger covers
   const offset = 50;          // increased offset for larger boxes
 
   const maxPages = books.length
@@ -129,13 +119,11 @@ const Stats = () => {
 
   // Enhanced BookSpine with intelligent title wrapping
   const BookSpine = ({ book, maxPages, moodColor  }) => {
-    const widthPx = maxPages
-      ? (book.page_count / maxPages) * 200
-      : 0;
+    const widthPx = Math.max(28, maxPages ? (book.page_count / maxPages) * 200 : 28);
     const coverHeight = 200;
     const gap = 8;
     
-    console.log('BookSpine debug:', book.id, 'widthPx:', widthPx, 'moodColor:', moodColor);
+
 
     // Shorten author name
     const nameParts = (book.author || '').split(' ');
@@ -228,7 +216,7 @@ const Stats = () => {
         <AspectRatio ratio={4 / 3} width={{base:"100%", md:"80%"}} height="80%">
           <ComposableMap projectionConfig={{ rotate: [-10, 0, 0], scale: 147 }}>
             <Geographies geography={geoUrl}>
-              {({ geographies, projection }) => (
+              {({ geographies }) => (
                 <>
                   {geographies.map(geo => (
                     <Geography
@@ -238,10 +226,7 @@ const Stats = () => {
                       stroke="#607D8B"
                     />
                   ))}
-                  {books.map((book, i) => {
-                    // automatic ISO-based translation
-                    const countryCode = countries.getAlpha2Code(book.country, 'hu') || countries.getAlpha2Code(book.country, 'en');
-                    const isoName = countryCode ? countries.getName(countryCode, 'en') : undefined;
+                  {(() => {
                     const normalizationMap = {
                       'Erdély': 'Romania',
                       'Magyarország': 'Hungary',
@@ -263,62 +248,39 @@ const Stats = () => {
                       'Dánia': 'Denmark',
                       'Ausztrália': 'Australia'
                     };
-                    // determine initial nameKey
-                    let nameKey = isoName || normalizationMap[book.country] || book.country;
-                    // attempt auto match
-                    let match = geographies.find(
-                      geo => geo.properties.name === nameKey
-                    );
-                    // fallback to manual if no match
-                    if (!match) {
-                      const fallback = normalizationMap[book.country];
-                      if (fallback && fallback !== nameKey) {
-                        nameKey = fallback;
-                        match = geographies.find(
-                          geo => geo.properties.name === nameKey
-                        );
-                      }
-                    }
-                    console.log('Debug: book', book.title, 'country:', book.country, '-> nameKey:', nameKey);
-                    console.log('Debug: available topo countries:', geographies.map(g => g.properties.name));(
-                      geo => geo.properties.name === nameKey
-                    );
-                    if (!match) {
-                      console.warn(`Debug: No geography match for country nameKey: ${nameKey}`);
-                      return null;
-                    }
-                    console.log(`Debug: Matched geography for ${nameKey}`, match);
-                    const centroid = geoCentroid(match);
-                    return (
-                      <Marker key={`marker-${i}`} coordinates={centroid}>
-                        <line
-                          x1={0}
-                          y1={0}
-                          x2={offset}
-                          y2={-offset}
-                          stroke="gray"
-                          strokeWidth={1}
-                        />
-                        <rect
-                          x={offset}
-                          y={-offset - boxSize / 2}
-                          width={boxSize}
-                          height={boxSize}
-                          fill="white"
-                          stroke="gray"
-                          rx={4}
-                        />
-                        <image
-                          xlinkHref={book.cover_url}
-                          x={offset}
-                          y={-offset - boxSize / 2}
-                          width={boxSize}
-                          height={boxSize}
-                          preserveAspectRatio="xMidYMid slice"
-                        />
-                      </Marker>
-                    );
-                  })}
+                    const groups = new Map();
+                    books.forEach(book => {
+                      const code = countries.getAlpha2Code(book.country, 'hu') || countries.getAlpha2Code(book.country, 'en');
+                      const name = normalizationMap[book.country] || (code && countries.getName(code, 'en')) || book.country;
+                      const match = geographies.find(geo => geo.properties.name === name);
+                      if (!match) return;
+                      const group = groups.get(match.rsmKey) || { match, books: [] };
+                      group.books.push(book);
+                      groups.set(match.rsmKey, group);
+                    });
+                    return [...groups.values()].map(({ match, books: countryBooks }) => {
+                      const columns = Math.min(countryBooks.length, 3);
+                      const rows = Math.ceil(countryBooks.length / columns);
+                      const width = columns * (boxSize + 4) + 4;
+                      const height = rows * (boxSize + 4) + 4;
+                      return (
+                        <Marker key={match.rsmKey} coordinates={geoCentroid(match)}>
+                          <title>{countryBooks[0].country}: {countryBooks.map(book => book.title).join(', ')}</title>
+                          <line x1={0} y1={0} x2={offset} y2={-offset} stroke="gray" />
+                          <rect x={offset} y={-offset - height / 2} width={width} height={height}
+                            fill="white" stroke="#607D8B" strokeWidth={2} rx={4} />
+                          {countryBooks.map((book, i) => (
+                            <image key={book.id} href={book.cover_url}
+                              x={offset + 4 + (i % columns) * (boxSize + 4)}
+                              y={-offset - height / 2 + 4 + Math.floor(i / columns) * (boxSize + 4)}
+                              width={boxSize} height={boxSize} preserveAspectRatio="xMidYMid meet">
+                              <title>{book.title} – {book.author}</title>
+                            </image>
+                          ))}
+                        </Marker>
+                      );
+                    });
+                  })()}
                 </>
               )}
             </Geographies>
@@ -326,123 +288,7 @@ const Stats = () => {
         </AspectRatio>
       </Box>
 
-      {/* 2. Custom timeline */}
-      <Box mb={10} position="relative" height="350px">
-        <Flex w="100%" mb={4} align="center" justify="center">
-          <Heading size="xl">Az Idővonalunk</Heading>
-        </Flex>
-        
-        <Flex>
-          {/* axis with arrow */}
-          <Box position="absolute" top="53.2%" left="4%" right="4%" height="4px" bg="gray.300">
-            <Box
-              as="svg"
-              position="absolute"
-              right="-6px"
-              top="-4px"
-              width="12px"
-              height="12px"
-              viewBox="0 0 12 12"
-            >
-              <path d="M0,0 L12,6 L0,12" fill="gray" />
-            </Box>
-          </Box>
-
-          {(() => {
-            const years = timelineData.map(d => d.year);
-            const minYear = Math.min(...years) - 10;
-            const maxYear = Math.max(...years) + 10;
-            const range = maxYear - minYear;
-            const dotGap = 4; // small offset from axis
-
-            return timelineData.map(({ year, count }, idx) => {
-              const pct = 4 + ((year - minYear) / range) * 92;
-              const left = `${pct}%`;
-              const size = Math.sqrt(count) * 8;
-
-              return (
-                <Box
-                  key={year}
-                  position="absolute"
-                  left={left}
-                  top={`calc(55% - ${size/2 + dotGap}px)`}
-                  width={`${size}px`}
-                  height={`${size}px`}
-                  bg="blue.500"
-                  borderRadius="50%"
-                  transform="translateX(-50%)"
-                />
-              );
-            });
-          })()}
-
-          {(() => {
-            const years = timelineData.map(d => d.year);
-            const minYear = Math.min(...years) - 10;
-            const maxYear = Math.max(...years) + 10;
-            const range = maxYear - minYear;
-            const coverHeight = 120;
-            const gap = 20; // distance between axis and cover
-            return timelineData.flatMap(({ year }, idx) => {
-              const pct = 4 + ((year - minYear) / range) * 92;
-              const left = `${pct}%`;
-              const booksYear = books.filter(b => b.release_year === year);
-              const above = idx % 2 === 0;
-
-              return booksYear.map((book, j) => {
-                // position first cover gap pixels away
-                const yOffset = above
-                  ? -(coverHeight + gap) * (j + 1)
-                  : gap + j * (coverHeight + gap);
-
-                return (
-                  <Box
-                    key={`${year}-${j}`}
-                    position="absolute"
-                    left={left}
-                    top={`calc(55% + ${yOffset}px)`}
-                    transform="translateX(-50%)"
-                    width="80px"
-                    height={`${coverHeight}px`}
-                  >
-                    {/* leader line spanning exactly between axis and cover */}
-                    <Box
-                      position="absolute"
-                      left="50%"
-                      top={above ? `100%` : `-${gap}px`}
-                      width="2px"
-                      height={`${gap}px`}
-                      bg="gray.500"
-                      transform="translateX(-50%)"
-                    />
-
-                    {/* cover image */}
-                    <Box
-                      as="img"
-                      src={book.cover_url}
-                      width="100%"
-                      height="100%"
-                      objectFit="cover"
-                      boxShadow="md"
-                    />
-
-                    {/* year label just outside the cover */}
-                    <Text
-                      position="absolute"
-                      left="50%"
-                      top={above ? `-26px` : `calc(100% + ${gap - 10}px)`}
-                      transform="translateX(-50%)"
-                      fontSize="sm"
-                    >
-                      {year}
-                    </Text>
-                  </Box>
-                );
-              });
-            });
-          })()}
-        </Flex>
-      </Box>
+      <BookTimeline books={books} />
 
       {/* Hány női és férfi szerzőt olvastunk? */}
       <Flex direction="column" align="center" mb={10} px={4}>
@@ -558,7 +404,7 @@ const Stats = () => {
                   p={3}
                   borderRadius="md"
                 >
-                  <Flex>
+                  <Flex wrap="wrap">
                     {booksInGenre.map((book, idx) => (
                       <Box
                         key={idx}
@@ -573,7 +419,7 @@ const Stats = () => {
                   </Flex>
                 </Box>
                 <Text ml={4} fontWeight="bold" color="gray.800">
-                  {genre}
+                  {genre} ({count})
                 </Text>
               </Flex>
             );

@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   Box,
+  Input,
   Heading,
   Tabs,
   useTabs,
@@ -38,7 +39,6 @@ import {
 export default function Books() {
   const { user } = useAuth()
   const tabs = useTabs({ defaultValue: 'readings' })
-  const activeTab = tabs.value
   const [books, setBooks] = useState([])
   const [userMeta, setUserMeta] = useState({})
   const [isAdmin, setIsAdmin] = useState(false)
@@ -55,6 +55,7 @@ export default function Books() {
   const [countryFilter, setCountryFilter] = useState([])
   const [genderFilter,  setGenderFilter]  = useState([])
   const [sortField,     setSortField]     = useState('title')
+  const [searchTerm, setSearchTerm] = useState('')
   const [sortAsc,       setSortAsc]       = useState(true)
 
   const [allGenres,    setAllGenres]    = useState([])
@@ -83,6 +84,7 @@ export default function Books() {
   const sortCollection = useMemo(
     () => createListCollection({
       items: [
+        { label: 'Hozzáadás dátuma', value: 'added_when' },
         { label: 'Cím',     value: 'title'    },
         { label: 'Megjelenés',   value: 'release_year' },
         { label: 'Oldalszám',     value: 'page_count'   },
@@ -95,7 +97,7 @@ export default function Books() {
   const fetchBooks = async () => {
     const { data, error } = await supabase
       .from('books')
-      .select('id, title, author, added_by, is_selected, cover_url, genre, country, author_gender, release_year, page_count')
+      .select('id, title, author, added_by, is_selected, cover_url, genre, country, author_gender, release_year, page_count, added_when, message')
     if (error) console.error(error)
     else setBooks(data)
   }
@@ -128,7 +130,7 @@ export default function Books() {
   }, [user]);
 
   // fetch user_books and normalize mood_color → always “#rrggbb”
-  const fetchMeta = async () => {
+  const fetchMeta = useCallback(async () => {
     if (!user) return
     const { data, error } = await supabase
       .from('user_books')
@@ -148,7 +150,7 @@ export default function Books() {
       }
     })
     setUserMeta(m)
-  }
+  }, [user])
 
   useEffect(() => {
     const waitlist = books.filter(b => !b.is_selected)
@@ -225,14 +227,20 @@ export default function Books() {
       })
     fetchBooks()
     fetchMeta()
-  }, [user])
+  }, [user, fetchMeta])
 
   //Filter and sort books
   const displayedWaitlist = useMemo(() => {
     let list = books.filter(b => !b.is_selected)
 
+    const normalized = value => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('hu')
+    const terms = normalized(searchTerm).split(/\s+/).filter(Boolean)
+    if (terms.length) list = list.filter(book => {
+      const text = normalized([book.title, book.author, book.country, ...(book.genre || []), book.added_by, book.message, book.release_year].join(' '))
+      return terms.every(term => text.includes(term))
+    })
     if (genreFilter.length)
-      list = list.filter(b => b.genre.some(g => genreFilter.includes(g)))
+      list = list.filter(b => (b.genre || []).some(g => genreFilter.includes(g)))
     if (countryFilter.length)
       list = list.filter(b => countryFilter.includes(b.country))
     if (genderFilter.length)
@@ -240,7 +248,12 @@ export default function Books() {
 
     list.sort((a, b) => {
      let va, vb 
-     if (sortField === 'title') { 
+     if (sortField === 'added_when') {
+       if (!a.added_when) return b.added_when ? 1 : 0
+       if (!b.added_when) return -1
+       va = new Date(a.added_when).getTime()
+       vb = new Date(b.added_when).getTime()
+     } else if (sortField === 'title') {
        va = a.title.toLowerCase() 
        vb = b.title.toLowerCase() 
      } else { 
@@ -254,7 +267,7 @@ export default function Books() {
    })
 
     return list
-  }, [books, genreFilter, countryFilter, genderFilter, sortField, sortAsc])
+  }, [books, genreFilter, countryFilter, genderFilter, sortField, sortAsc, searchTerm])
 
   return (
     <Box maxW="4xl" mx="auto" mt={6} px={4} overflowX="hidden">
@@ -288,7 +301,7 @@ export default function Books() {
         <Tabs.Content value="readings">
           {viewMode === 'list' ? (
             <VStack spacing={3} align="stretch">
-              {readings.map(({ date, books: book }) => {
+              {readings.filter(({ books: book }) => book).map(({ books: book }) => {
                 const meta = userMeta[book.id] || {}
                 return (
                   <Box
@@ -338,7 +351,7 @@ export default function Books() {
                 rowGap="4"
                 justifyItems="center"
               >
-                {readings.map(({ date, books: book }) => {
+                {readings.filter(({ books: book }) => book).map(({ books: book }) => {
                   const meta = userMeta[book.id] || {}
                   return (
                     <Box
@@ -385,15 +398,19 @@ export default function Books() {
             Adj hozzá új könyvet!
           </Text>
           <BookSearchSelector
+            allowCustom
             onBookClick={b => { setEditBook(b); setAddModalOpen(true) }}
             ref={searchRef}
           />
 
           <Separator my={4} />
           { /* ───────────── Filters & Sort ───────────── */ }
-          <Box mb={4}>
+          <Box mb={4} display="flex" flexWrap="wrap" alignItems="flex-end" gap={3}>
+            <Input aria-label="Keresés a várólistában" placeholder="Keresés a várólistában: cím, szerző, műfaj…"
+              value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+              flex={{ base: '1 0 100%', md: '1 1 180px' }} w={{ base: '100%', md: '200px' }} order={{ base: 0, md: 2 }} />
             {/* Desktop filters */}
-            <Box display={{ base: 'none', md: 'flex' }} justifyContent="space-between" alignItems="center">
+            <Box display={{ base: 'none', md: 'flex' }} flex="2 1 500px" gap={3} minW="0" justifyContent="space-between" alignItems="center">
               <HStack spacing={3}>
                 {/* Genre */}
                 <Select.Root
@@ -560,8 +577,8 @@ export default function Books() {
             </Box>
 
             {/* Mobile icons */}
-            <Box display={{ base: 'flex', md: 'none' }}>
-              <HStack w="100%" alignItems="center">
+            <Box display={{ base: 'flex', md: 'none' }} w="full">
+              <HStack w="100%" alignItems="center" flexWrap="wrap">
                 {/* Genre */}
                 <Popover.Root>
                   <Popover.Trigger asChild>
@@ -761,7 +778,7 @@ export default function Books() {
                           value={sortField}
                           onValueChange={details  => setSortField(details.value)}
                           >
-                          <HStack gap="4">
+                          <Stack gap="4">
                               {sortCollection.items.map(item => (
                               <RadioGroup.Item key={item.value} value={item.value}>
                                   <RadioGroup.ItemHiddenInput />
@@ -769,7 +786,7 @@ export default function Books() {
                                   <RadioGroup.ItemText>{item.label}</RadioGroup.ItemText>
                               </RadioGroup.Item>
                               ))}
-                          </HStack>
+                          </Stack>
                           </RadioGroup.Root>
                       </Popover.Body>
                     </Popover.Content>
@@ -779,6 +796,7 @@ export default function Books() {
             </Box>
           </Box>
 
+          {!displayedWaitlist.length && <Text mt={4}>Nincs a feltételeknek megfelelő könyv.</Text>}
           <VStack spacing={4} mt={6} align="stretch">
             {displayedWaitlist.map(book => ( 
               <Box
@@ -809,6 +827,9 @@ export default function Books() {
                       <Text fontSize="xs" color="blackAlpha.600" noOfLines={1}>
                         Hozzáadta: {book.added_by}
                       </Text>
+                      {book.added_when && <Text fontSize="xs" color="blackAlpha.600">
+                        Hozzáadva: {new Date(book.added_when).toLocaleDateString('hu-HU')}
+                      </Text>}
                     </Box>
                   </Flex>
                   {(book.added_by === user.user_metadata.display_name || isAdmin) && (

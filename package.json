@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test scripts/*.test.mjs",
+    "check:google-books": "node scripts/check-google-books.mjs"
   },
   "dependencies": {
     "@chakra-ui/icons": "^2.2.4",

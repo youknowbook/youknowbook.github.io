@@ -1,106 +1,83 @@
-import {
-  Box,
-  Input,
-  Text,
-  Image,
-  Spinner,
-  VStack
-} from '@chakra-ui/react'
-import { forwardRef, useImperativeHandle, useState } from 'react'
+import { Box, Button, Input, Text, Image, Spinner, VStack, HStack } from '@chakra-ui/react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { searchGoogleBooks } from '../../api/googleBooks'
 
-const GOOGLE_BOOKS_API_KEY = import.meta.env.VITE_GOOGLE_BOOKS_API_KEY
-
-const BookSearchSelector = forwardRef(({ onBookClick }, ref) => {
+const BookSearchSelector = forwardRef(({ onBookClick, allowCustom = false }, ref) => {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState([])
   const [loading, setLoading] = useState(false)
-
-  useImperativeHandle(ref, () => ({
-    clear() {
-      setQuery('')
-      setResults([])
-    }
-  }))
-
-  const handleSearch = async (e) => {
-    if (e.key !== 'Enter' || !query) return
-
-    setLoading(true)
-    try {
-      const langRestrict = /^[\u0000-\u007F]+$/.test(query) ? 'en' : 'hu'
-      const res = await fetch(
-        `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&langRestrict=${langRestrict}&maxResults=10&key=${GOOGLE_BOOKS_API_KEY}`
-      )
-      const data = await res.json()
-      const items = data.items || []
-
-      const parsed = items.map((item) => {
-        const info = item.volumeInfo
-        const parsedItem = {
-          key: item.id || Math.random().toString(),
-          title: info.title || 'Unknown',
-          author: (info.authors || ['Unknown'])[0],
-          cover_url: info.imageLinks?.thumbnail || '',
-          page_count: info.pageCount || null,
-          genre: info.categories || [],
-          country: info.language || '',
-        }
-        console.log("📘 Keresett könyv:", parsedItem)
-        return parsedItem
-      })
-
-      setResults(parsed)
-    } catch (err) {
-      console.error('Keresési hiba:', err)
-      setResults([])
-    }
+  const [error, setError] = useState('')
+  const [searched, setSearched] = useState(false)
+  const request = useRef(null)
+  useEffect(() => () => request.current?.abort(), [])
+  const clear = () => {
+    request.current?.abort()
+    setQuery('')
+    setResults([])
+    setError('')
+    setSearched(false)
     setLoading(false)
   }
-
+  useImperativeHandle(ref, () => ({ clear }))
+  const handleSearch = async e => {
+    e.preventDefault()
+    if (!query.trim()) return
+    request.current?.abort()
+    const controller = new AbortController()
+    request.current = controller
+    setLoading(true)
+    setError('')
+    setResults([])
+    setSearched(false)
+    try {
+      const books = await searchGoogleBooks(query, {
+        apiKey: import.meta.env.VITE_GOOGLE_BOOKS_API_KEY,
+        signal: controller.signal,
+      })
+      if (!controller.signal.aborted) {
+        setResults(books)
+        setSearched(true)
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) setError(err.message)
+    } finally {
+      if (!controller.signal.aborted) setLoading(false)
+    }
+  }
+  const choose = book => { onBookClick(book); clear() }
   return (
     <Box>
-      <Input
-        placeholder="Keress könyvet cím vagy szerző alapján (enterrel keres)"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onKeyDown={handleSearch}
-      />
-
+      <HStack as="form" onSubmit={handleSearch}>
+        <Input aria-label="Google Books keresés" placeholder="Keress könyvet cím vagy szerző alapján"
+          value={query} onChange={e => {
+            request.current?.abort()
+            setLoading(false)
+            setQuery(e.target.value)
+            setResults([])
+            setError('')
+            setSearched(false)
+          }} />
+        <Button type="submit" disabled={loading || !query.trim()}>Keresés</Button>
+      </HStack>
       {loading && <Spinner mt={4} />}
-
-      <VStack spacing={3} mt={4} align="stretch">
-        {results.map((book) => (
-          <Box
-            key={book.key}
-            p={3}
-            border="1px solid"
-            borderColor="gray.200"
-            borderRadius="md"
-            _hover={{ bg: 'gray.50', cursor: 'pointer' }}
-            onClick={() => {
-              console.log("✅ Könyv kiválasztva:", book)
-              onBookClick(book)
-              setQuery('')
-              setResults([])
-            }}
-            display="flex"
-            alignItems="center"
-          >
-            {book.cover_url && (
-              <Image
-                src={book.cover_url}
-                boxSize="50px"
-                objectFit="cover"
-                mr={4}
-                alt={book.title}
-              />
-            )}
-            <Box>
-              <Text fontWeight="bold">{book.title}</Text>
-              <Text fontSize="sm" color="gray.600">{book.author}</Text>
-            </Box>
+      {error && <Text role="alert" mt={3} color="red.600">{error}</Text>}
+      {searched && !results.length && <Text mt={3}>Nincs találat.</Text>}
+      <VStack gap={3} mt={4} align="stretch" maxH="min(50dvh, 420px)" overflowY="auto">
+        {results.map(book => (
+          <Box as="button" type="button" textAlign="left" key={book.key} p={3}
+            border="1px solid" borderColor="gray.200" borderRadius="md"
+            _hover={{ bg: 'gray.50' }} onClick={() => choose(book)}
+            display="flex" alignItems="center" flexShrink={0}>
+            {book.cover_url && <Image src={book.cover_url} boxSize="50px" objectFit="cover" mr={4} alt={book.title} />}
+            <Box><Text fontWeight="bold">{book.title}</Text><Text fontSize="sm">{book.author}</Text></Box>
           </Box>
         ))}
+        {allowCustom && (
+          <Button variant="outline" flexShrink={0} whiteSpace="normal" height="auto" py={3}
+            onClick={() => choose({ title: query.trim(), genre: [] })}>
+            ＋ Könyv hozzáadása kézzel
+          </Button>
+        )}
       </VStack>
     </Box>
   )

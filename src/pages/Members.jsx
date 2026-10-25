@@ -6,6 +6,7 @@ import {
   Stack,
   Image,
   Text,
+  Spinner,
   AvatarGroup,
   Button,
   IconButton,
@@ -17,6 +18,7 @@ import { Avatar } from '@chakra-ui/react'
 import { FaSortAmountUp, FaSortAmountDown, FaCheck } from 'react-icons/fa'
 import { createPortal } from 'react-dom'
 import { supabase } from '../api/supabaseClient'
+import { fetchMembers } from '../api/members'
 
 function MemberCard({ member, onBookClick, attendedCount }) {
   return (
@@ -154,6 +156,11 @@ function MemberCard({ member, onBookClick, attendedCount }) {
 
 export default function Members() {
   const [members, setMembers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [meetingError, setMeetingError] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+  const hasRegistrationDates = members.some(member => member.auth_created_at && Number.isFinite(Date.parse(member.auth_created_at)))
   const [selectedBook, setSelectedBook] = useState(null)
   const [meetings, setMeetings] = useState([])
   const [currentUserId, setCurrentUserId] = useState(null)
@@ -169,10 +176,10 @@ export default function Members() {
         items: [
           { label: 'Szint',         value: 'level' },
           { label: 'Név',           value: 'display_name' },
-          { label: 'Regisztráció',  value: 'created_at' },
+          ...(hasRegistrationDates ? [{ label: 'Regisztráció', value: 'created_at' }] : []),
         ],
       }),
-    []
+    [hasRegistrationDates]
   )
 
   // after sortCollection
@@ -197,41 +204,37 @@ export default function Members() {
   }, [])
 
   useEffect(() => {
-    async function loadMembers() {
-      const { data, error } = await supabase
-        .from('users')
-        .select('id, is_admin, display_name, profile_picture, motto, favourite_books, auth_created_at')
-      if (error) console.error('Hiba a tagok betöltésekor:', error)
-      else setMembers(data || [])
-    }
-    loadMembers()
-  }, [])
+    let cancelled = false
+    setLoading(true)
+    setLoadError('')
+    fetchMembers(supabase).then(data => {
+      if (!cancelled) setMembers(data)
+    }).catch(error => {
+      if (!cancelled) setLoadError(`Nem sikerült betölteni a tagokat: ${error.message}`)
+    }).finally(() => {
+      if (!cancelled) setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [reloadKey])
 
   useEffect(() => {
-    async function loadMeetings() {
-      const { data, error } = await supabase
-        .from('meetings')
-        .select('id, is_active, attendees')
-      if (error) console.error('Failed to load meetings:', error)
-      else setMeetings(data || [])
-    }
-    loadMeetings()
-  }, [])
-
-  // helper to count past (inactive) meeting attendance
-  function countPast(memberId) {
-    return meetings.filter(
-      m =>
-        m.is_active === false &&
-        Array.isArray(m.attendees) &&
-        m.attendees.includes(memberId)
-    ).length
-  }
+    let cancelled = false
+    setMeetingError(false)
+    supabase.from('meetings').select('id,is_active,attendees').then(({ data, error }) => {
+      if (cancelled) return
+      setMeetingError(!!error)
+      setMeetings(error ? [] : data || [])
+    })
+    return () => { cancelled = true }
+  }, [reloadKey])
 
   // level map for sorting & badges
   const levelById = useMemo(() => {
-    const map = new Map()
-    for (const m of members) map.set(m.id, countPast(m.id))
+    const map = new Map(members.map(member => [member.id, 0]))
+    for (const meeting of meetings) {
+      if (meeting.is_active !== false || !Array.isArray(meeting.attendees)) continue
+      for (const id of new Set(meeting.attendees)) map.set(id, (map.get(id) || 0) + 1)
+    }
     return map
   }, [members, meetings])
 
@@ -246,7 +249,7 @@ export default function Members() {
         const cmp = va.localeCompare(vb, 'hu')
         return sortAsc ? cmp : -cmp
       }
-      if (sortField === 'created_at') {
+      if (sortField === 'created_at' && hasRegistrationDates) {
         va = new Date(a.auth_created_at || 0).getTime()
         vb = new Date(b.auth_created_at || 0).getTime()
         const cmp = va - vb // older first
@@ -315,12 +318,11 @@ export default function Members() {
               >
                 <Select.ValueText whiteSpace="nowrap" />
               </Select.Trigger>
+              <Select.IndicatorGroup>
+                <Select.Indicator />
+                <Select.ClearTrigger onClick={() => setSortField('level')} />
+              </Select.IndicatorGroup>
             </Select.Control>
-
-            <Select.IndicatorGroup>
-              <Select.Indicator />
-              <Select.ClearTrigger onClick={() => setSortField('level')} />
-            </Select.IndicatorGroup>
 
             <Portal>
               <Select.Positioner
@@ -360,8 +362,13 @@ export default function Members() {
         </HStack>
       </HStack>
 
+      {loading && <HStack role="status"><Spinner size="sm" /><Text>Tagok betöltése…</Text></HStack>}
+      {loadError && <Box role="alert"><Text color="red.600">{loadError}</Text><Button mt={2} onClick={() => setReloadKey(key => key + 1)}>Újrapróbálás</Button></Box>}
+      {!loading && !loadError && !members.length && <Text role="status">Nincs megjeleníthető tag. Ellenőrizd, hogy a profilok elérhetők-e a bejelentkezett felhasználó számára.</Text>}
+      {meetingError && <Text role="status" color="orange.700">A részvételi adatok nem tölthetők be, a tagsági szintek átmenetileg nem elérhetők.</Text>}
+
       {/* Adminok */}
-      <Box>
+      {!loading && !loadError && members.length > 0 && <Box>
         <Text fontSize="lg" mb={2}>Adminok ({adminsShown.length})</Text>
         <VStack spacing={6} align="stretch">
           {adminsShown.map(m => (
@@ -373,10 +380,10 @@ export default function Members() {
             />
           ))}
         </VStack>
-      </Box>
+      </Box>}
 
       {/* Tagok */}
-      <Box mt={8}>
+      {!loading && !loadError && members.length > 0 && <Box mt={8}>
         <Text fontSize="lg" mb={2}>Tagok ({regularShown.length})</Text>
         <VStack spacing={6} align="stretch">
           {regularShown.map(m => (
@@ -388,7 +395,7 @@ export default function Members() {
             />
           ))}
         </VStack>
-      </Box>
+      </Box>}
 
       {/* Book info popover */}
       {selectedBook && createPortal(
